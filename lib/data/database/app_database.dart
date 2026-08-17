@@ -37,7 +37,12 @@ class AppDatabase {
       path,
       options: OpenDatabaseOptions(
         version: AppConstants.dbVersion,
-        onConfigure: (db) => db.execute('PRAGMA foreign_keys = ON'),
+        onConfigure: (db) async {
+          // تسريع الكتابة وتحسين التزامن تحت ضغط العمليات الكثيرة (WAL).
+          await db.execute('PRAGMA foreign_keys = ON');
+          await db.rawQuery('PRAGMA journal_mode = WAL');
+          await db.rawQuery('PRAGMA synchronous = NORMAL');
+        },
         onCreate: (db, version) async {
           await db.execute(_productsTable);
           await db.execute(_salesTable);
@@ -52,6 +57,9 @@ class AppDatabase {
           await db.execute(_customerPaymentsTable);
           await db.execute(_suppliersTable);
           await db.execute(_supplierPaymentsTable);
+          await db.execute(_shiftsTable);
+          await db.execute(_heldCartsTable);
+          await db.execute(_heldCartItemsTable);
         },
         onUpgrade: (db, oldVersion, newVersion) async {
           if (oldVersion < 2) {
@@ -152,6 +160,111 @@ class AppDatabase {
             // backfill: توزيع الدفعات التاريخية على الفواتير (الأقدم أولًا)
             await _backfillHistoricalSupplierPayments(db);
           }
+          if (oldVersion < 10) {
+            await _ensureColumnExists(
+              db,
+              'sales',
+              'tax_rate',
+              'REAL NOT NULL DEFAULT 0',
+            );
+            await _ensureColumnExists(
+              db,
+              'sales',
+              'tax_amount',
+              'REAL NOT NULL DEFAULT 0',
+            );
+          }
+          if (oldVersion < 11) {
+            // فهارس لتسريع البحث والتصفية عند نمو البيانات
+            // (آلاف الفواتير والبنود يوميًا).
+            await _createIndex(db, 'idx_sales_created_at', 'sales', 'created_at');
+            await _createIndex(db, 'idx_sales_customer', 'sales', 'customer_id');
+            await _createIndex(
+              db,
+              'idx_sales_invoice_number',
+              'sales',
+              'invoice_number',
+            );
+            await _createIndex(db, 'idx_sale_items_sale', 'sale_items', 'sale_id');
+            await _createIndex(
+              db,
+              'idx_sale_items_product',
+              'sale_items',
+              'product_id',
+            );
+            await _createIndex(
+              db,
+              'idx_expenses_created_at',
+              'expenses',
+              'created_at',
+            );
+            await _createIndex(
+              db,
+              'idx_purchases_created_at',
+              'purchases',
+              'created_at',
+            );
+            await _createIndex(
+              db,
+              'idx_purchases_supplier',
+              'purchases',
+              'supplier_id',
+            );
+            await _createIndex(
+              db,
+              'idx_purchase_items_purchase',
+              'purchase_items',
+              'purchase_id',
+            );
+            await _createIndex(
+              db,
+              'idx_customer_payments_customer',
+              'customer_payments',
+              'customer_id',
+            );
+            await _createIndex(
+              db,
+              'idx_supplier_payments_supplier',
+              'supplier_payments',
+              'supplier_id',
+            );
+            await _createIndex(
+              db,
+              'idx_supplier_payments_purchase',
+              'supplier_payments',
+              'purchase_id',
+            );
+            await _createIndex(db, 'idx_products_name', 'products', 'name');
+          }
+          if (oldVersion < 12) {
+            // المبلغ المدفوع والجزء المدفوع بالشبكة (لحساب الباقي والدفع المختلط).
+            await _ensureColumnExists(
+              db,
+              'sales',
+              'amount_tendered',
+              'REAL NOT NULL DEFAULT 0',
+            );
+            await _ensureColumnExists(
+              db,
+              'sales',
+              'card_amount',
+              'REAL NOT NULL DEFAULT 0',
+            );
+          }
+          if (oldVersion < 13) {
+            // الورديات: تُفتح تلقائيًا عند أول بيع وتُغلق يدويًا من Z-Report.
+            await db.execute(_shiftsTable);
+            // الفواتير المعلقة (Hold Invoice) مع بنودها.
+            await db.execute(_heldCartsTable);
+            await db.execute(_heldCartItemsTable);
+            // توقيت المرتجع لإسناده إلى الوردية التي حدث فيها.
+            await _ensureColumnExists(
+              db,
+              'sales',
+              'refunded_at',
+              'TEXT',
+            );
+          }
         },
       ),
     );
@@ -218,6 +331,21 @@ class AppDatabase {
     }
   }
 
+  static Future<void> _createIndex(
+    Database db,
+    String indexName,
+    String tableName,
+    String columnName,
+  ) async {
+    final rows = await db.rawQuery('PRAGMA index_list($tableName)');
+    final exists = rows.any((row) => row['name'] == indexName);
+    if (!exists) {
+      await db.execute(
+        'CREATE INDEX $indexName ON $tableName($columnName)',
+      );
+    }
+  }
+
   static bool _isDesktop() =>
       Platform.isLinux || Platform.isWindows || Platform.isMacOS;
 
@@ -248,11 +376,16 @@ class AppDatabase {
       total REAL NOT NULL,
       items_count INTEGER NOT NULL,
       discount REAL NOT NULL DEFAULT 0,
+      tax_rate REAL NOT NULL DEFAULT 0,
+      tax_amount REAL NOT NULL DEFAULT 0,
       payment_method TEXT NOT NULL DEFAULT 'نقدي',
       customer_id INTEGER,
       cashier_name TEXT,
       note TEXT,
       refunded INTEGER NOT NULL DEFAULT 0,
+      refunded_at TEXT,
+      amount_tendered REAL NOT NULL DEFAULT 0,
+      card_amount REAL NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL
     )
   ''';
@@ -365,6 +498,43 @@ class AppDatabase {
       supplier_id INTEGER NOT NULL,
       amount REAL NOT NULL,
       created_at TEXT NOT NULL
+    )
+  ''';
+
+  static const String _shiftsTable = '''
+    CREATE TABLE shifts(
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      cashier_name TEXT NOT NULL,
+      opened_at TEXT NOT NULL,
+      closed_at TEXT
+    )
+  ''';
+
+  static const String _heldCartsTable = '''
+    CREATE TABLE held_carts(
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      saved_at TEXT NOT NULL,
+      discount REAL NOT NULL DEFAULT 0,
+      payment_method TEXT NOT NULL DEFAULT 'نقدي',
+      customer_id INTEGER,
+      note TEXT,
+      cashier_name TEXT NOT NULL DEFAULT '',
+      items_count INTEGER NOT NULL DEFAULT 0,
+      total REAL NOT NULL DEFAULT 0
+    )
+  ''';
+
+  static const String _heldCartItemsTable = '''
+    CREATE TABLE held_cart_items(
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      held_cart_id INTEGER NOT NULL,
+      product_id INTEGER,
+      name TEXT NOT NULL,
+      price REAL NOT NULL,
+      cost_price REAL NOT NULL DEFAULT 0,
+      quantity REAL NOT NULL,
+      subtotal REAL NOT NULL,
+      FOREIGN KEY (held_cart_id) REFERENCES held_carts(id) ON DELETE CASCADE
     )
   ''';
 }

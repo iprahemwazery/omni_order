@@ -4,6 +4,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../../core/constants.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../domain/models/product.dart';
+import '../../../shared/widgets/barcode_scanner_dialog.dart';
 import '../../categories/presentation/categories_cubit.dart';
 import '../../categories/presentation/categories_state.dart';
 import 'products_cubit.dart';
@@ -67,6 +68,12 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
     _lowStockThreshold.dispose();
     _barcode.dispose();
     super.dispose();
+  }
+
+  Future<void> _scanBarcode() async {
+    final code = await showBarcodeScanner(context);
+    if (code == null || !mounted) return;
+    _barcode.text = code;
   }
 
   Future<void> _save() async {
@@ -211,10 +218,15 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
                 TextFormField(
                   controller: _barcode,
                   keyboardType: TextInputType.text,
-                  decoration: const InputDecoration(
+                  decoration: InputDecoration(
                     labelText: 'الباركود (اختياري)',
-                    prefixIcon: Icon(Icons.qr_code_scanner),
+                    prefixIcon: const Icon(Icons.qr_code_scanner),
                     hintText: 'مثال: 6221031550621',
+                    suffixIcon: IconButton(
+                      tooltip: 'مسح بالكاميرا',
+                      icon: const Icon(Icons.photo_camera_outlined),
+                      onPressed: _scanBarcode,
+                    ),
                   ),
                 ),
                 const SizedBox(height: 20),

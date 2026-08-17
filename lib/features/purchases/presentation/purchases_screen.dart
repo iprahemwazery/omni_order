@@ -7,7 +7,9 @@ import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 
 import '../../../core/theme/app_colors.dart';
+import '../../../core/utils/error_utils.dart';
 import '../../../core/utils/formatters.dart';
+import '../../../core/utils/pdf_exporter.dart';
 import '../../../domain/models/purchase.dart';
 import '../../../domain/models/purchase_item.dart';
 import '../../../domain/models/store_settings.dart';
@@ -411,7 +413,7 @@ class PurchaseDetailsScreen extends StatelessWidget {
     List<PurchaseItem> items,
     StoreSettings settings,
   ) async {
-    final doc = pw.Document();
+    final doc = await PdfExporter.newDocument();
     doc.addPage(
       pw.Page(
         pageFormat: PdfPageFormat.a4,
@@ -451,78 +453,95 @@ class PurchaseDetailsScreen extends StatelessWidget {
             ),
           ];
 
-          return pw.Column(
-            crossAxisAlignment: pw.CrossAxisAlignment.start,
-            children: [
-              pw.Container(
-                width: double.infinity,
-                padding: const pw.EdgeInsets.all(16),
-                decoration: pw.BoxDecoration(
-                  color: PdfColors.teal,
-                  borderRadius: const pw.BorderRadius.all(
-                    pw.Radius.circular(12),
+          return PdfExporter.rtl(
+            pw.Column(
+              crossAxisAlignment: pw.CrossAxisAlignment.start,
+              children: [
+                pw.Container(
+                  width: double.infinity,
+                  padding: const pw.EdgeInsets.all(16),
+                  decoration: pw.BoxDecoration(
+                    color: PdfColors.teal,
+                    borderRadius: const pw.BorderRadius.all(
+                      pw.Radius.circular(12),
+                    ),
+                  ),
+                  child: pw.Column(
+                    crossAxisAlignment: pw.CrossAxisAlignment.start,
+                    children: [
+                      pw.Text(
+                        settings.storeName,
+                        style: pw.TextStyle(
+                          color: PdfColors.white,
+                          fontSize: 24,
+                          fontWeight: pw.FontWeight.bold,
+                        ),
+                      ),
+                      if (settings.phone.isNotEmpty)
+                        pw.Text(
+                          settings.phone,
+                          style: pw.TextStyle(color: PdfColors.white),
+                        ),
+                      pw.SizedBox(height: 4),
+                      pw.Text(
+                        'فاتورة شراء',
+                        style: pw.TextStyle(
+                          color: PdfColors.white,
+                          fontWeight: pw.FontWeight.bold,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-                child: pw.Column(
-                  crossAxisAlignment: pw.CrossAxisAlignment.start,
-                  children: [
-                    pw.Text(
-                      settings.storeName,
-                      style: pw.TextStyle(
-                        color: PdfColors.white,
-                        fontSize: 24,
-                        fontWeight: pw.FontWeight.bold,
-                      ),
-                    ),
-                    if (settings.phone.isNotEmpty)
-                      pw.Text(
-                        settings.phone,
-                        style: pw.TextStyle(color: PdfColors.white),
-                      ),
-                    pw.SizedBox(height: 4),
-                    pw.Text(
-                      'فاتورة شراء',
-                      style: pw.TextStyle(
-                        color: PdfColors.white,
-                        fontWeight: pw.FontWeight.bold,
-                      ),
-                    ),
-                  ],
+                pw.SizedBox(height: 12),
+                pw.Text(
+                  'المورد: ${purchase.supplierName.isEmpty ? 'غير محدد' : purchase.supplierName}',
                 ),
-              ),
-              pw.SizedBox(height: 12),
-              pw.Text(
-                'المورد: ${purchase.supplierName.isEmpty ? 'غير محدد' : purchase.supplierName}',
-              ),
-              pw.Text('التاريخ: ${AppFormatters.dateTime(purchase.createdAt)}'),
-              pw.Text(
-                'الإجمالي: ${AppFormatters.money(purchase.total, settings.currency)}',
-              ),
-              pw.Text(
-                'المدفوع: ${AppFormatters.money(purchase.paidAmount, settings.currency)}',
-              ),
-              pw.Text(
-                'المتبقي: ${AppFormatters.money(purchase.remainingBalance, settings.currency)}',
-              ),
-              if (purchase.note.isNotEmpty) pw.Text('ملاحظة: ${purchase.note}'),
-              pw.SizedBox(height: 16),
-              pw.Table(border: pw.TableBorder.all(), children: itemRows),
-            ],
+                pw.Text('التاريخ: ${AppFormatters.dateTime(purchase.createdAt)}'),
+                pw.Text(
+                  'الإجمالي: ${AppFormatters.money(purchase.total, settings.currency)}',
+                ),
+                pw.Text(
+                  'المدفوع: ${AppFormatters.money(purchase.paidAmount, settings.currency)}',
+                ),
+                pw.Text(
+                  'المتبقي: ${AppFormatters.money(purchase.remainingBalance, settings.currency)}',
+                ),
+                if (purchase.note.isNotEmpty) pw.Text('ملاحظة: ${purchase.note}'),
+                pw.SizedBox(height: 16),
+                pw.Table(border: pw.TableBorder.all(), children: itemRows),
+              ],
+            ),
           );
         },
       ),
     );
 
-    final dir = await getApplicationDocumentsDirectory();
-    final file = File(
-      '${dir.path}/purchase_${purchase.id ?? DateTime.now().millisecondsSinceEpoch}.pdf',
-    );
-    await file.writeAsBytes(await doc.save());
-
-    if (!context.mounted) return;
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text('تم حفظ ملف PDF في: ${file.path}')));
+    try {
+      final bytes = await doc.save();
+      final fileName =
+          'purchase_${purchase.id ?? DateTime.now().millisecondsSinceEpoch}.pdf';
+      final location = await PdfExporter.saveToDownloads(bytes, fileName);
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text(
+              location == null
+                  ? 'تعذر حفظ فاتورة الشراء في مجلد التنزيلات'
+                  : 'تم حفظ فاتورة الشراء في $location: $fileName',
+            ),
+          ),
+        );
+    } catch (e) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(content: Text(safeErrorMessage('تعذر حفظ فاتورة الشراء', e))),
+        );
+    }
   }
 }
 

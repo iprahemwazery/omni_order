@@ -1,38 +1,115 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:omni_order/core/utils/password_utils.dart';
+import 'package:omni_order/data/repositories/local_license_store.dart';
+import 'package:omni_order/data/repositories/supabase_license_repository.dart';
 import 'package:omni_order/data/services/auth_service.dart';
-import 'package:omni_order/domain/models/admin.dart';
+import 'package:omni_order/data/services/license_service.dart';
+import 'package:omni_order/data/services/secure_store.dart';
+import 'package:omni_order/domain/models/license.dart';
 import 'package:omni_order/features/auth/presentation/auth_cubit.dart';
 import 'package:omni_order/features/auth/presentation/auth_state.dart';
+import 'package:omni_order/features/license/presentation/license_cubit.dart';
+import 'package:omni_order/features/license/presentation/license_state.dart';
 import 'package:omni_order/main.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'fakes/fake_store_repository.dart';
+import 'test_helpers.dart';
 
-/// خدمة ترخيص تجريبية تتحكم في النتيجة يدويًا (بدون شبكة).
-class FakeAuthService extends AuthService {
-  FakeAuthService({required this.ready, this.error});
+/// تخزين آمن تجريبي بالذاكرة.
+class InMemorySecureStore implements SecureStore {
+  final Map<String, String> data = {};
+
+  @override
+  Future<String?> read(String key) async => data[key];
+
+  @override
+  Future<void> write(String key, String value) async {
+    data[key] = value;
+  }
+
+  @override
+  Future<void> delete(String key) async {
+    data.remove(key);
+  }
+}
+
+/// خدمة ترخيص تجريبية: تتحكم في النتيجة يدويًا (بدون شبكة).
+class FakeLicenseService extends LicenseService {
+  FakeLicenseService({
+    this.ready = true,
+    License? stored,
+    this.activateResult,
+  }) : _stored = stored;
 
   final bool ready;
-  final String? error;
-
-  bool signedOut = false;
-  String? lastEmail;
-  String? lastPassword;
+  LicenseResult? activateResult;
+  License? _stored;
+  String? lastLicenseKey;
 
   @override
   bool get isReady => ready;
 
   @override
-  Future<String?> loginSingleDevice({
-    required String email,
-    required String password,
-  }) async {
-    lastEmail = email;
-    lastPassword = password;
-    return error;
+  Future<LicenseResult> checkOffline() async {
+    final s = _stored;
+    if (s == null) {
+      return LicenseResult.failure(
+        LicenseResultStatus.notFound,
+        'لا يوجد ترخيص مفعّل على هذا الجهاز.',
+      );
+    }
+    final now = DateTime.now();
+    final expiresAt = s.expiresAt;
+    if (expiresAt != null && now.isAfter(expiresAt)) {
+      return LicenseResult.failure(
+        LicenseResultStatus.expired,
+        'لقد انتهت صلاحية هذا الترخيص.',
+      );
+    }
+    final verifiedAt = s.verifiedAt;
+    if (verifiedAt != null && now.isBefore(verifiedAt)) {
+      return LicenseResult.failure(
+        LicenseResultStatus.timeTampered,
+        'يبدو أن تاريخ الجهاز تم تعديله.',
+      );
+    }
+    return LicenseResult.success(s, online: false);
   }
+
+  @override
+  Future<LicenseResult> activateOrVerify(String licenseKey) async {
+    lastLicenseKey = licenseKey;
+    final forced = activateResult;
+    if (forced != null) {
+      if (forced.isSuccess && forced.license != null) {
+        _stored = forced.license;
+      }
+      return forced;
+    }
+    final license = License(
+      licenseKey: licenseKey,
+      deviceId: 'device-1',
+      activatedAt: DateTime.now(),
+      expiresAt: DateTime.now().add(const Duration(days: 365)),
+      verifiedAt: DateTime.now(),
+    );
+    _stored = license;
+    return LicenseResult.success(license, online: true);
+  }
+}
+
+/// بوابة ترخيص تجريبية: تفويض حقيقي لـ FakeLicenseService عبر AuthService.
+class FakeAuthService extends AuthService {
+  FakeAuthService({required this.ready, LicenseService? license})
+      : super(licenseService: license);
+
+  final bool ready;
+  bool signedOut = false;
+
+  @override
+  bool get isReady => ready;
 
   @override
   Future<void> logout() async {
@@ -40,539 +117,485 @@ class FakeAuthService extends AuthService {
   }
 }
 
-/// خدمة تُرجع جلسة محفوظة (توكن) كما لو كان المستخدم سجّل الدخول سابقًا.
-class FakeAuthServiceWithSession extends AuthService {
-  FakeAuthServiceWithSession({required this.session});
-
-  final Session? session;
-
-  @override
-  bool get isReady => true;
-
-  @override
-  Session? get currentSession => session;
+/// ترخيص ساري للاختبارات.
+License validLicense({
+  String key = 'KEY-1234',
+  String deviceId = 'device-1',
+}) {
+  return License(
+    licenseKey: key,
+    deviceId: deviceId,
+    activatedAt: DateTime.now().subtract(const Duration(days: 1)),
+    expiresAt: DateTime.now().add(const Duration(days: 30)),
+    verifiedAt: DateTime.now().subtract(const Duration(hours: 1)),
+  );
 }
 
-/// اختبار ربط تسجيل الدخول بـ Supabase والترخيص وصلاحيات النظام المحلية.
 void main() {
-  group('AuthCubit - تسجيل الدخول عبر Supabase', () {
-    test('نجاح الترخيص ينتقل لاختيار الدور دون إنشاء أدمن بعد', () async {
-      final repo = FakeStoreRepository();
-      final auth = FakeAuthService(ready: true);
-      final cubit = AuthCubit(repo, authService: auth);
+  group('LocalLicenseStore - وضع عدم الاتصال', () {
+    test('لا يوجد تفعيل محفوظ -> notFound', () async {
+      final store = LocalLicenseStore(store: InMemorySecureStore());
+      final result = await store.check('device-1');
+      expect(result.status, LicenseResultStatus.notFound);
+      expect(result.isSuccess, isFalse);
+    });
 
-      final error = await cubit.login('owner@store.com', 'pass123');
+    test('تفعيل ساري على نفس الجهاز -> Offline Verified', () async {
+      final store = LocalLicenseStore(store: InMemorySecureStore());
+      await store.save(validLicense());
+      final result = await store.check('device-1');
+      expect(result.status, LicenseResultStatus.offlineVerified);
+      expect(result.isSuccess, isTrue);
+      expect(result.license?.licenseKey, 'KEY-1234');
+    });
 
+    test('بصمة جهاز مختلفة -> رفض (Other Device)', () async {
+      final store = LocalLicenseStore(store: InMemorySecureStore());
+      await store.save(validLicense(deviceId: 'device-1'));
+      final result = await store.check('device-2');
+      expect(result.status, LicenseResultStatus.otherDevice);
+      expect(result.isSuccess, isFalse);
+    });
+
+    test('انتهت الصلاحية محليًا -> Expired', () async {
+      final store = LocalLicenseStore(store: InMemorySecureStore());
+      await store.save(
+        validLicense().copyWith(
+          expiresAt: DateTime.now().subtract(const Duration(days: 1)),
+        ),
+      );
+      final result = await store.check('device-1');
+      expect(result.status, LicenseResultStatus.expired);
+      expect(result.isSuccess, isFalse);
+    });
+
+    test('ترخيص دائم (بدون انتهاء) -> صالح', () async {
+      final store = LocalLicenseStore(store: InMemorySecureStore());
+      await store.save(validLicense().copyWith(expiresAt: null));
+      final result = await store.check('device-1');
+      expect(result.isSuccess, isTrue);
+    });
+
+    test('تلاعب بالتاريخ: تاريخ الجهاز أقدم من آخر تحقق -> رفض', () async {
+      final store = LocalLicenseStore(store: InMemorySecureStore());
+      await store.save(
+        validLicense().copyWith(
+          verifiedAt: DateTime.now().add(const Duration(days: 1)),
+        ),
+      );
+      final result = await store.check('device-1');
+      expect(result.status, LicenseResultStatus.timeTampered);
+      expect(result.isSuccess, isFalse);
+    });
+
+    test('clear يمسح التفعيل المحفوظ', () async {
+      final store = LocalLicenseStore(store: InMemorySecureStore());
+      await store.save(validLicense());
+      await store.clear();
+      final result = await store.check('device-1');
+      expect(result.status, LicenseResultStatus.notFound);
+    });
+  });
+
+  group('SupabaseLicenseRepository - التحقق عبر RPC', () {
+    SupabaseLicenseRepository repo(LocalLicenseStore store,
+        Future<dynamic> Function(Map<String, dynamic>) caller) {
+      return SupabaseLicenseRepository(localStore: store, rpcCaller: caller);
+    }
+
+    test('تفعيل أول -> Online Verified + حفظ محلي', () async {
+      final store = LocalLicenseStore(store: InMemorySecureStore());
+      final now = DateTime.now();
+      final repository = repo(store, (_) async => {
+        'success': true,
+        'code': 'activated',
+        'device_id': 'device-1',
+        'activated_at': now.toIso8601String(),
+        'expires_at': now
+            .add(const Duration(days: 365))
+            .toIso8601String(),
+        'server_time': now.toIso8601String(),
+      });
+
+      final result =
+          await repository.activateOrVerify(licenseKey: 'KEY-1234', deviceId: 'device-1');
+      expect(result.status, LicenseResultStatus.onlineVerified);
+      expect(result.isSuccess, isTrue);
+
+      // التفعيل أصبح متاحًا محليًا (وضع عدم الاتصال).
+      final offline = await repository.checkStoredActivation('device-1');
+      expect(offline.isSuccess, isTrue);
+    });
+
+    test('تحقق لنفس الجهاز -> Online Verified', () async {
+      final store = LocalLicenseStore(store: InMemorySecureStore());
+      final repository = repo(store, (_) async => {
+        'success': true,
+        'code': 'verified',
+        'device_id': 'device-1',
+        'activated_at': DateTime.now().toIso8601String(),
+        'server_time': DateTime.now().toIso8601String(),
+      });
+      final result = await repository.activateOrVerify(
+          licenseKey: 'KEY-1234', deviceId: 'device-1');
+      expect(result.isSuccess, isTrue);
+      expect(result.status, LicenseResultStatus.onlineVerified);
+    });
+
+    test('ترخيص معطل -> Inactive + مسح التفعيل المحلي (Kill-Switch)', () async {
+      final store = LocalLicenseStore(store: InMemorySecureStore());
+      await store.save(validLicense());
+      final repository = repo(store, (_) async => {
+        'success': false,
+        'code': 'license_inactive',
+        'message': 'تم تعطيل هذا الترخيص',
+      });
+
+      final result = await repository.activateOrVerify(
+          licenseKey: 'KEY-1234', deviceId: 'device-1');
+      expect(result.status, LicenseResultStatus.inactive);
+      expect(result.message, 'تم تعطيل هذا الترخيص من قبل الإدارة.');
+
+      final offline = await repository.checkStoredActivation('device-1');
+      expect(offline.isSuccess, isFalse, reason: 'يجب مسح التفعيل المحلي');
+    });
+
+    test('مفتاح غير موجود -> Not Found', () async {
+      final repository = repo(
+          LocalLicenseStore(store: InMemorySecureStore()),
+          (_) async => {
+                'success': false,
+                'code': 'license_not_found',
+                'message': 'مفتاح الترخيص غير موجود',
+              });
+      final result = await repository.activateOrVerify(
+          licenseKey: 'WRONG', deviceId: 'device-1');
+      expect(result.status, LicenseResultStatus.notFound);
+      expect(result.message, 'مفتاح الترخيص غير صحيح أو غير موجود.');
+    });
+
+    test('جهاز مختلف -> Other Device', () async {
+      final repository = repo(
+          LocalLicenseStore(store: InMemorySecureStore()),
+          (_) async => {
+                'success': false,
+                'code': 'license_other_device',
+                'message': 'هذا الترخيص مستخدم على جهاز آخر',
+              });
+      final result = await repository.activateOrVerify(
+          licenseKey: 'KEY-1234', deviceId: 'device-2');
+      expect(result.status, LicenseResultStatus.otherDevice);
+      expect(result.message,
+          'هذا الترخيص مستخدم على جهاز آخر ولا يمكن استخدامه هنا.');
+    });
+
+    test('لا يوجد إنترنت + تفعيل محلي صالح -> Offline Verified', () async {
+      final store = LocalLicenseStore(store: InMemorySecureStore());
+      await store.save(validLicense());
+      final repository = repo(store, (_) async {
+        throw const SocketException('Connection failed');
+      });
+
+      final result = await repository.activateOrVerify(
+          licenseKey: 'KEY-1234', deviceId: 'device-1');
+      expect(result.status, LicenseResultStatus.offlineVerified);
+      expect(result.isSuccess, isTrue);
+    });
+
+    test('لا يوجد إنترنت + لا يوجد تفعيل محلي -> رسالة الإنترنت', () async {
+      final repository = repo(
+          LocalLicenseStore(store: InMemorySecureStore()),
+          (_) async => throw const SocketException('Connection failed'));
+      final result = await repository.activateOrVerify(
+          licenseKey: 'KEY-1234', deviceId: 'device-1');
+      expect(result.status, LicenseResultStatus.error);
+      expect(result.message, contains('تعذر الاتصال بالإنترنت'));
+    });
+  });
+
+  group('LicenseCubit - الحالات الثلاث', () {
+    test('بدون تفعيل -> Not Activated (تُعرض شاشة التفعيل)', () async {
+      final cubit = LicenseCubit(FakeLicenseService());
+      await cubit.init();
+      expect(cubit.state.stage, LicenseStage.notActivated);
+      expect(cubit.state.isGranted, isFalse);
+    });
+
+    test('تفعيل محلي صالح -> Granted (Offline Verified)', () async {
+      final cubit = LicenseCubit(
+        FakeLicenseService(stored: validLicense()),
+      );
+      await cubit.init();
+      expect(cubit.state.stage, LicenseStage.granted);
+      expect(cubit.state.isGranted, isTrue);
+    });
+
+    test('تفعيل أونلاين ناجح -> Granted', () async {
+      final service = FakeLicenseService();
+      final cubit = LicenseCubit(service);
+      final error = await cubit.activate('KEY-1234');
       expect(error, isNull);
-      expect(auth.lastEmail, 'owner@store.com');
-      expect(auth.lastPassword, 'pass123');
-      expect(cubit.state.status, AuthStatus.chooseRole);
-      expect(cubit.state.pendingEmail, 'owner@store.com');
+      expect(cubit.state.stage, LicenseStage.granted);
+      expect(service.lastLicenseKey, 'KEY-1234');
+    });
+
+    test('رفض أونلاين -> Rejected مع رسالة عربية', () async {
+      final service = FakeLicenseService()
+        ..activateResult = LicenseResult.failure(
+          LicenseResultStatus.otherDevice,
+          'هذا الترخيص مستخدم على جهاز آخر ولا يمكن استخدامه هنا.',
+        );
+      final cubit = LicenseCubit(service);
+      final error = await cubit.activate('KEY-1234');
+      expect(error, 'هذا الترخيص مستخدم على جهاز آخر ولا يمكن استخدامه هنا.');
+      expect(cubit.state.stage, LicenseStage.rejected);
+    });
+
+    test('بدون Supabase (وضع التطوير) -> البوابة مفتوحة مباشرة', () async {
+      final cubit = LicenseCubit(FakeLicenseService(ready: false));
+      await cubit.init();
+      expect(cubit.state.stage, LicenseStage.granted);
+    });
+  });
+
+  group('AuthCubit - بوابة الترخيص', () {
+    test('بدون تفعيل محلي -> شاشة التفعيل', () async {
+      final repo = FakeStoreRepository();
+      await seedSuperAdmin(repo);
+      final license = FakeLicenseService();
+      final cubit = AuthCubit(
+        repo,
+        authService: FakeAuthService(ready: true, license: license),
+      );
+
+      await cubit.init();
+
+      expect(cubit.state.status, AuthStatus.activation);
       expect(cubit.state.admin, isNull);
-      expect(repo.admins, isEmpty);
     });
 
-    test('الدخول كأدمن بدون أدمن موجود ينشئ أدمنًا أساسيًا (زي الإعداد القديم)',
-        () async {
+    test('تفعيل محلي صالح -> يتجاوز شاشة التفعيل للدخول المحلي', () async {
       final repo = FakeStoreRepository();
-      final auth = FakeAuthService(ready: true);
-      final cubit = AuthCubit(repo, authService: auth);
-
-      await cubit.login('owner@store.com', 'pass');
-      expect(await cubit.needsAdminCreation(), isTrue);
-
-      final error = await cubit.loginAsAdmin(
-        username: 'owner',
-        password: '123456',
-        confirmPassword: '123456',
+      await seedSuperAdmin(repo);
+      final license = FakeLicenseService(stored: validLicense());
+      final cubit = AuthCubit(
+        repo,
+        authService: FakeAuthService(ready: true, license: license),
       );
-
-      expect(error, isNull);
-      expect(cubit.state.status, AuthStatus.authenticated);
-      expect(cubit.state.admin?.username, 'owner');
-      expect(cubit.state.admin?.isSuperAdmin, isTrue);
-      expect(repo.admins.length, 1);
-      expect(repo.admins.first.username, 'owner');
-      expect(repo.admins.first.isSuperAdmin, isTrue);
-    });
-
-    test('إعادة الدخول كأدمن يتحقق من البيانات ولا ينشئ أدمنًا جديدًا',
-        () async {
-      final repo = FakeStoreRepository();
-      final auth = FakeAuthService(ready: true);
-      final cubit = AuthCubit(repo, authService: auth);
-
-      await cubit.login('owner@store.com', 'pass');
-      await cubit.loginAsAdmin(
-        username: 'owner',
-        password: '123456',
-        confirmPassword: '123456',
-      );
-      await cubit.logout();
-      expect(repo.admins.length, 1);
-
-      await cubit.login('owner@store.com', 'pass');
-      final error = await cubit.loginAsAdmin(
-        username: 'owner',
-        password: '123456',
-      );
-
-      expect(error, isNull);
-      expect(cubit.state.admin?.username, 'owner');
-      expect(repo.admins.length, 1);
-    });
-
-    test('الدخول كأدمن بكلمة سر خاطئة يرجّع خطأ', () async {
-      final repo = FakeStoreRepository();
-      final auth = FakeAuthService(ready: true);
-      final cubit = AuthCubit(repo, authService: auth);
-
-      await cubit.login('owner@store.com', 'pass');
-      await cubit.loginAsAdmin(
-        username: 'owner',
-        password: '123456',
-        confirmPassword: '123456',
-      );
-      await cubit.logout();
-
-      await cubit.login('owner@store.com', 'pass');
-      final error = await cubit.loginAsAdmin(
-        username: 'owner',
-        password: 'wrong',
-      );
-
-      expect(error, 'اسم المستخدم أو كلمة السر غير صحيحة.');
-      expect(cubit.state.status, AuthStatus.chooseRole);
-    });
-
-    test('لا يُنشأ أدمن جديد بعد وجود أدمن (اسم مستخدم غير موجود)', () async {
-      final repo = FakeStoreRepository();
-      final auth = FakeAuthService(ready: true);
-      final cubit = AuthCubit(repo, authService: auth);
-
-      await cubit.login('owner@store.com', 'pass');
-      await cubit.loginAsAdmin(
-        username: 'owner',
-        password: '123456',
-        confirmPassword: '123456',
-      );
-      await cubit.logout();
-
-      await cubit.login('owner@store.com', 'pass');
-      final error = await cubit.loginAsAdmin(
-        username: 'other',
-        password: 'x',
-        confirmPassword: 'x',
-      );
-
-      expect(error, 'اسم المستخدم أو كلمة السر غير صحيحة.');
-      expect(repo.admins.length, 1);
-    });
-
-    test('إنشاء الأدمن بمصادقة كلمة سر مختلفة يرجّع خطأ', () async {
-      final repo = FakeStoreRepository();
-      final auth = FakeAuthService(ready: true);
-      final cubit = AuthCubit(repo, authService: auth);
-
-      await cubit.login('owner@store.com', 'pass');
-      final error = await cubit.loginAsAdmin(
-        username: 'owner',
-        password: '123456',
-        confirmPassword: '654321',
-      );
-
-      expect(error, 'كلمتا السر غير متطابقتين.');
-      expect(repo.admins, isEmpty);
-    });
-
-    test('الدخول ككاشير ينشئ أدمنًا بدور كاشير', () async {
-      final repo = FakeStoreRepository();
-      final auth = FakeAuthService(ready: true);
-      final cubit = AuthCubit(repo, authService: auth);
-
-      await cubit.login('cashier@store.com', 'pass');
-      final error = await cubit.loginAsCashier();
-
-      expect(error, isNull);
-      expect(cubit.state.status, AuthStatus.authenticated);
-      expect(cubit.state.admin?.role, UserRole.cashier);
-      expect(cubit.state.admin?.has(UserPermission.makeSales), isTrue);
-      expect(cubit.state.admin?.has(UserPermission.manageProducts), isFalse);
-    });
-
-    test('الدخول ككاشير بنفس الإيميل يحدّث دور نفس الأدمن دون تكرار', () async {
-      final repo = FakeStoreRepository();
-      final auth = FakeAuthService(ready: true);
-      final cubit = AuthCubit(repo, authService: auth);
-
-      await cubit.login('cashier@store.com', 'pass');
-      await cubit.loginAsCashier();
-      await cubit.logout();
-
-      await cubit.login('cashier@store.com', 'pass');
-      await cubit.loginAsCashier();
-
-      expect(repo.admins.length, 1);
-      expect(cubit.state.admin?.id, repo.admins.first.id);
-      expect(repo.admins.first.role, UserRole.cashier);
-    });
-
-    test('فشل الترخيص يرجّع رسالة الخطأ ولا ينتقل لاختيار الدور', () async {
-      final repo = FakeStoreRepository();
-      final auth = FakeAuthService(
-        ready: true,
-        error: 'خطأ في جدول الترخيص: table not found',
-      );
-      final cubit = AuthCubit(repo, authService: auth);
-      await cubit.init();
-
-      final error = await cubit.login('owner@store.com', 'wrong');
-
-      expect(error, 'خطأ في جدول الترخيص: table not found');
-      expect(cubit.state.status, AuthStatus.unauthenticated);
-      expect(cubit.state.admin, isNull);
-      expect(cubit.state.pendingEmail, isNull);
-      expect(repo.admins, isEmpty);
-    });
-
-    test('الدخول كأدمن أو ككاشير بدون جلسة دخول يرجّع خطأ', () async {
-      final repo = FakeStoreRepository();
-      final auth = FakeAuthService(ready: true);
-      final cubit = AuthCubit(repo, authService: auth);
-      await cubit.init();
-
-      final adminError = await cubit.loginAsAdmin(
-        username: 'owner',
-        password: 'x',
-      );
-      final cashierError = await cubit.loginAsCashier();
-
-      expect(adminError, isNotNull);
-      expect(cashierError, isNotNull);
-      expect(cubit.state.status, AuthStatus.unauthenticated);
-    });
-
-    test('حين يكون Supabase غير مفعّل يعود لتسجيل الدخول المحلي', () async {
-      final repo = FakeStoreRepository();
-      await repo.addAdmin(Admin(
-        username: 'admin',
-        passwordHash: PasswordUtils.hash('123456'),
-        role: UserRole.superAdmin,
-      ));
-      final auth = FakeAuthService(ready: false);
-      final cubit = AuthCubit(repo, authService: auth);
-
-      final error = await cubit.login('admin', '123456');
-
-      expect(error, isNull);
-      expect(cubit.state.status, AuthStatus.authenticated);
-      expect(cubit.state.admin?.username, 'admin');
-      expect(auth.lastEmail, isNull, reason: 'لا يوجد اتصال بـ Supabase');
-    });
-
-    test('logout يسجّل الخروج من Supabase', () async {
-      final repo = FakeStoreRepository();
-      final auth = FakeAuthService(ready: true);
-      final cubit = AuthCubit(repo, authService: auth);
-
-      await cubit.login('owner@store.com', 'pass');
-      await cubit.loginAsAdmin(
-        username: 'owner',
-        password: '123456',
-        confirmPassword: '123456',
-      );
-      await cubit.logout();
-
-      expect(auth.signedOut, isTrue);
-      expect(cubit.state.status, AuthStatus.unauthenticated);
-    });
-
-    test('عند تفعيل Supabase تُعرض شاشة الدخول بدل الإعداد الأول', () async {
-      final repo = FakeStoreRepository(); // لا يوجد أي أدمن محلي
-      final auth = FakeAuthService(ready: true);
-      final cubit = AuthCubit(repo, authService: auth);
 
       await cubit.init();
 
       expect(cubit.state.status, AuthStatus.unauthenticated);
     });
 
-    test('عند عدم تفعيل Supabase وعدم وجود أدمن -> شاشة الإعداد الأول', () async {
+    test('تفعيل محلي صالح بدون أدمن -> شاشة الإعداد الأول', () async {
       final repo = FakeStoreRepository();
-      final auth = FakeAuthService(ready: false);
-      final cubit = AuthCubit(repo, authService: auth);
+      final license = FakeLicenseService(stored: validLicense());
+      final cubit = AuthCubit(
+        repo,
+        authService: FakeAuthService(ready: true, license: license),
+      );
 
       await cubit.init();
 
       expect(cubit.state.status, AuthStatus.setup);
     });
-  });
 
-  group('AuthCubit - استعادة الجلسة المحفوظة (الدخول المباشر)', () {
-    Session makeSession(String email) => Session(
-          accessToken: 'access-token-123',
-          refreshToken: 'refresh-token-123',
-          tokenType: 'bearer',
-          user: User(
-            id: 'user-1',
-            appMetadata: const {},
-            userMetadata: const {},
-            aud: 'authenticated',
-            email: email,
-            createdAt: '2026-01-01T00:00:00.000Z',
-          ),
+    test('تفعيل أونلاين ناجح -> onLicenseGranted يكمل الدخول المحلي', () async {
+      final repo = FakeStoreRepository();
+      await seedSuperAdmin(repo);
+      final license = FakeLicenseService();
+      final auth = FakeAuthService(ready: true, license: license);
+      final cubit = AuthCubit(repo, authService: auth);
+      await cubit.init();
+      expect(cubit.state.status, AuthStatus.activation);
+
+      final licenseCubit = LicenseCubit(license);
+      final error = await licenseCubit.activate('KEY-1234');
+      expect(error, isNull);
+
+      final grantedError = await cubit.onLicenseGranted();
+      expect(grantedError, isNull);
+      expect(cubit.state.status, AuthStatus.unauthenticated);
+    });
+
+    test('رفض التفعيل -> يبقى على شاشة التفعيل مع رسالة', () async {
+      final repo = FakeStoreRepository();
+      await seedSuperAdmin(repo);
+      final license = FakeLicenseService()
+        ..activateResult = LicenseResult.failure(
+          LicenseResultStatus.inactive,
+          'تم تعطيل هذا الترخيص من قبل الإدارة.',
         );
-
-    test('عند وجود جلسة محفوظة يُفتح التطبيق مباشرة بدون شاشة الدخول',
-        () async {
-      final repo = FakeStoreRepository();
-      await repo.addAdmin(Admin(
-        username: 'owner@store.com',
-        passwordHash: PasswordUtils.hash('x'),
-        role: UserRole.superAdmin,
-      ));
-      final auth = FakeAuthServiceWithSession(
-        session: makeSession('owner@store.com'),
-      );
+      final auth = FakeAuthService(ready: true, license: license);
       final cubit = AuthCubit(repo, authService: auth);
-
       await cubit.init();
+      expect(cubit.state.status, AuthStatus.activation);
 
-      expect(cubit.state.status, AuthStatus.authenticated);
-      expect(cubit.state.admin?.username, 'owner@store.com');
-      expect(cubit.state.isSuperAdmin, isTrue);
+      final licenseCubit = LicenseCubit(license);
+      final error = await licenseCubit.activate('KEY-1234');
+      expect(error, 'تم تعطيل هذا الترخيص من قبل الإدارة.');
+      expect(licenseCubit.state.stage, LicenseStage.rejected);
+
+      final grantedError = await cubit.onLicenseGranted();
+      expect(grantedError, isNotNull);
+      expect(cubit.state.status, AuthStatus.activation);
     });
 
-    test('استعادة الجلسة تحافظ على دور المستخدم المحفوظ (كاشير)', () async {
+    test('بدون Supabase (وضع التطوير) -> لا توجد بوابة ترخيص', () async {
       final repo = FakeStoreRepository();
-      await repo.addAdmin(Admin(
-        username: 'cashier@store.com',
-        passwordHash: PasswordUtils.hash('x'),
-        role: UserRole.cashier,
-      ));
-      final auth = FakeAuthServiceWithSession(
-        session: makeSession('cashier@store.com'),
+      await seedSuperAdmin(repo);
+      final cubit = AuthCubit(
+        repo,
+        authService: FakeAuthService(ready: false, license: FakeLicenseService()),
       );
-      final cubit = AuthCubit(repo, authService: auth);
-
-      await cubit.init();
-
-      expect(cubit.state.status, AuthStatus.authenticated);
-      expect(cubit.state.admin?.role, UserRole.cashier);
-      expect(cubit.state.admin?.has(UserPermission.makeSales), isTrue);
-    });
-
-    test('لو الجلسة بدون إيميل تُعرض شاشة تسجيل الدخول', () async {
-      final repo = FakeStoreRepository();
-      final auth = FakeAuthServiceWithSession(session: makeSession(''));
-      final cubit = AuthCubit(repo, authService: auth);
 
       await cubit.init();
 
       expect(cubit.state.status, AuthStatus.unauthenticated);
     });
 
-    test('الجلسة تُستعاد من Supabase (التوكن محفوظ محليًا)', () async {
+    test('logout لا يمسح الترخيص', () async {
       final repo = FakeStoreRepository();
-      await repo.addAdmin(Admin(
-        username: 'owner@store.com',
-        passwordHash: PasswordUtils.hash('x'),
-        role: UserRole.superAdmin,
-      ));
-      final auth = FakeAuthServiceWithSession(
-        session: makeSession('owner@store.com'),
-      );
+      final license = FakeLicenseService(stored: validLicense());
+      final auth = FakeAuthService(ready: true, license: license);
       final cubit = AuthCubit(repo, authService: auth);
-
       await cubit.init();
+      expect(cubit.state.status, AuthStatus.setup);
+
       await cubit.logout();
 
+      expect(auth.signedOut, isTrue);
       expect(cubit.state.status, AuthStatus.unauthenticated);
-      expect(cubit.state.admin, isNull);
+      // الترخيص ما زال صالحًا -> الدخول من جديد لا يتطلب مفتاحًا.
+      expect(await auth.checkOfflineActivation(), isNull);
+    });
+
+    test('الدخول المحلي يعمل بعد ضمان الترخيص', () async {
+      final repo = FakeStoreRepository();
+      await seedSuperAdmin(repo);
+      final license = FakeLicenseService(stored: validLicense());
+      final cubit = AuthCubit(
+        repo,
+        authService: FakeAuthService(ready: true, license: license),
+      );
+      await cubit.init();
+
+      final error = await cubit.login(testUsername, testPassword);
+
+      expect(error, isNull);
+      expect(cubit.state.status, AuthStatus.authenticated);
+      expect(cubit.state.admin?.username, testUsername);
+      expect(cubit.state.admin?.isSuperAdmin, isTrue);
     });
   });
 
-  group('تسجيل الدخول عبر Supabase - تدفق كامل (Widget)', () {
-    testWidgets('دخول ناجح -> اختيار كاشير -> الرئيسية بصلاحيات الكاشير فقط',
+  group('بوابة الترخيص - تدفق كامل (Widget)', () {
+    testWidgets('بدون تفعيل تظهر شاشة الترخيص، وبإدخال المفتاح يُكمل للدخول',
         (tester) async {
       tester.view.physicalSize = const Size(390, 844);
       tester.view.devicePixelRatio = 1.0;
       addTearDown(tester.view.reset);
 
       final repo = FakeStoreRepository();
-      final auth = FakeAuthService(ready: true);
+      await seedSuperAdmin(repo);
+      final license = FakeLicenseService();
+      final auth = FakeAuthService(ready: true, license: license);
 
       await tester.pumpWidget(
-        OmniOrderApp(repository: repo, authService: auth),
+        OmniOrderApp(repository: repo, authService: auth, licenseService: license),
       );
       await tester.pumpAndSettle();
 
-      // لأن Supabase مفعّل: شاشة الدخول بدل الإعداد الأول.
-      expect(find.text('البريد الإلكتروني'), findsOneWidget);
+      // بوابة التفعيل أولاً.
+      expect(find.byKey(const Key('activation_key')), findsOneWidget);
 
       await tester.enterText(
-        find.byKey(const Key('login_email')),
-        'owner@store.com',
+        find.byKey(const Key('activation_key')),
+        'ABC-DEF-123',
       );
-      await tester.enterText(
-        find.byKey(const Key('login_password')),
-        'secret',
-      );
-      await tester.tap(find.byKey(const Key('login_submit')));
+      await tester.tap(find.byKey(const Key('activation_submit')));
       await tester.pumpAndSettle();
 
-      // شاشة اختيار الدور بعد نجاح الدخول.
-      expect(find.text('اختيار الدور'), findsOneWidget);
-      expect(find.text('دخول كأدمن'), findsOneWidget);
-      expect(find.text('دخول ككاشير'), findsOneWidget);
+      expect(license.lastLicenseKey, 'ABC-DEF-123');
+      // بعد التفعيل -> شاشة الدخول المحلي.
+      expect(find.byKey(const Key('login_username')), findsOneWidget);
 
-      await tester.tap(find.text('دخول ككاشير'));
-      await tester.pumpAndSettle();
-
-      // الرئيسية بدور كاشير: بيع فقط وبدون إدارة المخزون.
+      // دخول محلي -> الرئيسية.
+      await login(tester);
       expect(find.text('بيع جديد'), findsOneWidget);
-      expect(find.text('المخزون'), findsNothing);
-      expect(repo.admins.single.role, UserRole.cashier);
     });
 
-    testWidgets('دخول ناجح -> اختيار أدمن -> كل صلاحيات الإدارة متاحة',
+    testWidgets('فشل التفعيل يعرض رسالة واضحة ويبقى على الشاشة', (tester) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      final repo = FakeStoreRepository();
+      await seedSuperAdmin(repo);
+      final license = FakeLicenseService()
+        ..activateResult = LicenseResult.failure(
+          LicenseResultStatus.otherDevice,
+          'هذا الترخيص مستخدم على جهاز آخر ولا يمكن استخدامه هنا.',
+        );
+      final auth = FakeAuthService(ready: true, license: license);
+
+      await tester.pumpWidget(
+        OmniOrderApp(repository: repo, authService: auth, licenseService: license),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.enterText(
+        find.byKey(const Key('activation_key')),
+        'ABC-DEF-123',
+      );
+      await tester.tap(find.byKey(const Key('activation_submit')));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.text('هذا الترخيص مستخدم على جهاز آخر ولا يمكن استخدامه هنا.'),
+        findsOneWidget,
+      );
+      expect(find.byKey(const Key('activation_key')), findsOneWidget);
+      expect(find.byKey(const Key('login_username')), findsNothing);
+    });
+
+    testWidgets('تفعيل محلي صالح يتجاوز شاشة الترخيص مباشرة', (tester) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      final repo = FakeStoreRepository();
+      await seedSuperAdmin(repo);
+      final license = FakeLicenseService(stored: validLicense());
+      final auth = FakeAuthService(ready: true, license: license);
+
+      await tester.pumpWidget(
+        OmniOrderApp(repository: repo, authService: auth, licenseService: license),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('activation_key')), findsNothing);
+      expect(find.byKey(const Key('login_username')), findsOneWidget);
+    });
+
+    testWidgets('بدون Supabase (وضع التطوير) يعمل مباشرة بدون ترخيص',
         (tester) async {
       tester.view.physicalSize = const Size(390, 844);
       tester.view.devicePixelRatio = 1.0;
       addTearDown(tester.view.reset);
 
       final repo = FakeStoreRepository();
-      final auth = FakeAuthService(ready: true);
+      await seedSuperAdmin(repo);
+      final auth = FakeAuthService(ready: false, license: FakeLicenseService());
 
       await tester.pumpWidget(
         OmniOrderApp(repository: repo, authService: auth),
       );
       await tester.pumpAndSettle();
 
-      await tester.enterText(
-        find.byKey(const Key('login_email')),
-        'owner@store.com',
-      );
-      await tester.enterText(
-        find.byKey(const Key('login_password')),
-        'secret',
-      );
-      await tester.tap(find.byKey(const Key('login_submit')));
-      await tester.pumpAndSettle();
-
-      await tester.tap(find.text('دخول كأدمن'));
-      await tester.pumpAndSettle();
-
-      // لأن مفيش أدمن بعد: نموذج إنشاء الأدمن الأساسي (زي الفكرة القديمة).
-      expect(find.text('إنشاء الأدمن الأساسي'), findsOneWidget);
-      await tester.enterText(find.byKey(const Key('admin_username')), 'owner');
-      await tester.enterText(find.byKey(const Key('admin_password')), '123456');
-      await tester.enterText(find.byKey(const Key('admin_confirm')), '123456');
-      await tester.tap(find.text('إنشاء ودخول'));
-      await tester.pumpAndSettle();
-
-      expect(find.text('المخزون'), findsOneWidget);
-      expect(find.text('التقارير'), findsOneWidget);
-      expect(find.text('العملاء'), findsOneWidget);
-      expect(repo.admins.single.username, 'owner');
-      expect(repo.admins.single.isSuperAdmin, isTrue);
-    });
-
-    testWidgets('الدخول كأدمن ببيانات خاطئة يعرض خطأ ولا يدخل', (tester) async {
-      tester.view.physicalSize = const Size(390, 844);
-      tester.view.devicePixelRatio = 1.0;
-      addTearDown(tester.view.reset);
-
-      final repo = FakeStoreRepository();
-      final auth = FakeAuthService(ready: true);
-
-      await tester.pumpWidget(
-        OmniOrderApp(repository: repo, authService: auth),
-      );
-      await tester.pumpAndSettle();
-
-      await tester.enterText(
-        find.byKey(const Key('login_email')),
-        'owner@store.com',
-      );
-      await tester.enterText(
-        find.byKey(const Key('login_password')),
-        'secret',
-      );
-      await tester.tap(find.byKey(const Key('login_submit')));
-      await tester.pumpAndSettle();
-
-      // إنشاء الأدمن الأول.
-      await tester.tap(find.text('دخول كأدمن'));
-      await tester.pumpAndSettle();
-      await tester.enterText(find.byKey(const Key('admin_username')), 'owner');
-      await tester.enterText(find.byKey(const Key('admin_password')), '123456');
-      await tester.enterText(find.byKey(const Key('admin_confirm')), '123456');
-      await tester.tap(find.text('إنشاء ودخول'));
-      await tester.pumpAndSettle();
-      expect(repo.admins.single.isSuperAdmin, isTrue);
-
-      // تسجيل الخروج ثم محاولة الدخول بكلمة سر خاطئة.
-      await tester.tap(find.byIcon(Icons.settings_outlined));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('تسجيل الخروج'));
-      await tester.pumpAndSettle();
-
-      await tester.enterText(
-        find.byKey(const Key('login_email')),
-        'owner@store.com',
-      );
-      await tester.enterText(
-        find.byKey(const Key('login_password')),
-        'secret',
-      );
-      await tester.tap(find.byKey(const Key('login_submit')));
-      await tester.pumpAndSettle();
-
-      await tester.tap(find.text('دخول كأدمن'));
-      await tester.pumpAndSettle();
-
-      // الآن يوجد أدمن: نموذج دخول وليس إنشاء، وبلا حقل تأكيد.
-      expect(find.text('دخول الأدمن'), findsOneWidget);
-      await tester.enterText(find.byKey(const Key('admin_username')), 'owner');
-      await tester.enterText(find.byKey(const Key('admin_password')), 'wrong');
-      await tester.tap(find.text('دخول'));
-      await tester.pumpAndSettle();
-
-      expect(find.text('اسم المستخدم أو كلمة السر غير صحيحة.'), findsOneWidget);
-      expect(find.text('المخزون'), findsNothing);
-    });
-
-    testWidgets('عند انقطاع الإنترنت تظهر رسالة واضحة في شاشة الدخول',
-        (tester) async {
-      tester.view.physicalSize = const Size(390, 844);
-      tester.view.devicePixelRatio = 1.0;
-      addTearDown(tester.view.reset);
-
-      final repo = FakeStoreRepository();
-      final auth = FakeAuthService(
-        ready: true,
-        error: AuthService.noInternetMessage,
-      );
-
-      await tester.pumpWidget(
-        OmniOrderApp(repository: repo, authService: auth),
-      );
-      await tester.pumpAndSettle();
-
-      await tester.enterText(
-        find.byKey(const Key('login_email')),
-        'owner@store.com',
-      );
-      await tester.enterText(
-        find.byKey(const Key('login_password')),
-        'secret',
-      );
-      await tester.tap(find.byKey(const Key('login_submit')));
-      await tester.pumpAndSettle();
-
-      expect(find.text(AuthService.noInternetMessage), findsOneWidget);
-      expect(find.text('المخزون'), findsNothing);
+      expect(find.byKey(const Key('activation_key')), findsNothing);
+      expect(find.byKey(const Key('login_username')), findsOneWidget);
     });
   });
 }

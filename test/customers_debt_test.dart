@@ -45,6 +45,12 @@ void main() {
     await pumpAppOnPhone(tester, repository);
 
     // فتح شاشة العملاء والضغط على العميل
+    await tester.scrollUntilVisible(
+      find.text('العملاء'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
     await tester.tap(find.text('العملاء'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('محمود'));
@@ -92,6 +98,12 @@ void main() {
 
     await pumpAppOnPhone(tester, repository);
 
+    await tester.scrollUntilVisible(
+      find.text('العملاء'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
     await tester.tap(find.text('العملاء'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('محمود'));

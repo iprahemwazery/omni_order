@@ -1,18 +1,20 @@
 import 'package:flutter_bloc/flutter_bloc.dart';
 
+import '../../../../core/utils/error_utils.dart';
 import '../../../../domain/models/sale.dart';
-import '../../../../domain/repositories/store_repository.dart';
 import '../../../../domain/models/sale_item.dart';
+import '../../../../domain/models/summaries.dart';
+import '../../../../domain/repositories/store_repository.dart';
 import 'sales_state.dart';
-
-/// مخرجات "الأعلى مبيعًا": الاسم + الكمية + الإيرادات.
-typedef TopProduct = ({String name, double quantity, double revenue});
 
 /// يدير سجل المبيعات والملخصات وبنود الفواتير.
 class SalesCubit extends Cubit<SalesState> {
   SalesCubit(this._repository) : super(const SalesState(loading: true));
 
   final StoreRepository _repository;
+
+  /// عدد الفواتير المحمّلة في ذاكرة شاشة "المبيعات السابقة".
+  static const int historyLimit = 500;
 
   Future<void> init() async {
     emit(const SalesState(loading: true));
@@ -21,10 +23,15 @@ class SalesCubit extends Cubit<SalesState> {
 
   Future<void> refresh() async {
     try {
-      final sales = await _repository.getSales();
-      emit(SalesState(sales: sales));
+      final results = await Future.wait<Object>([
+        _repository.getSales(limit: historyLimit),
+        _repository.getSalesTotals(),
+      ]);
+      final sales = results[0] as List<Sale>;
+      final totals = results[1] as SalesTotals;
+      emit(SalesState(sales: sales, totals: totals));
     } catch (e) {
-      emit(state.copyWith(error: 'تعذر تحميل المبيعات: $e'));
+      emit(state.copyWith(error: safeErrorMessage('تعذر تحميل المبيعات', e)));
     }
   }
 
@@ -32,8 +39,25 @@ class SalesCubit extends Cubit<SalesState> {
   Future<List<SaleItem>> saleItemsOf(int saleId) =>
       _repository.getSaleItems(saleId);
 
-  /// كل بنود الفواتير (تُستخدم لحساب تكلفة البضاعة في التقارير).
-  Future<List<SaleItem>> allSaleItems() => _repository.getAllSaleItems();
+  /// ملخص المبيعات محسوبًا داخل قاعدة البيانات (تُستخدم في التقارير).
+  Future<SalesTotals> salesTotals() => _repository.getSalesTotals();
+
+  /// أعلى الأصناف مبيعًا — تجميع GROUP BY داخل قاعدة البيانات.
+  Future<List<TopProduct>> topProducts({int limit = 5}) =>
+      _repository.topProducts(limit: limit);
+
+  /// تحليل الربح (البيع المحقق وتكلفة البضاعة) — استعلام SQL واحد.
+  Future<ProfitAnalytics> profitAnalytics() => _repository.getProfitAnalytics();
+
+  /// فواتير يوم واحد (تقرير اليوم المنفصل).
+  Future<List<Sale>> salesOn(DateTime day) => _repository.getSalesOn(day);
+
+  /// أيام "الأيام السابقة" التي تحتوي بيانات.
+  Future<List<DayHistoryEntry>> dayHistory() => _repository.getDayHistory();
+
+  /// إجماليات يومية لرسم اتجاه المبيعات.
+  Future<List<DailySaleTotals>> dailySalesTotals(int days) =>
+      _repository.getDailySalesTotals(days);
 
   /// مرتجع فاتورة: يعيد المخزون ويمحو أثرها على المديونية ثم يعيد التحميل.
   /// تُستدعى بعده إعادة تحميل [ProductsCubit] و [CustomersCubit] من الواجهة.
@@ -45,26 +69,7 @@ class SalesCubit extends Cubit<SalesState> {
       await refresh();
       return null;
     } catch (e) {
-      return 'تعذر تسجيل المرتجع: $e';
+      return safeErrorMessage('تعذر تسجيل المرتجع', e);
     }
-  }
-
-  /// أعلى الأصناف مبيعًا بالكمية — استعلام واحد على كل البنود.
-  Future<List<TopProduct>> topProducts({int limit = 5}) async {
-    final items = await _repository.getAllSaleItems();
-    final totals = <String, (double, double)>{};
-    for (final item in items) {
-      final current = totals[item.name] ?? (0.0, 0.0);
-      totals[item.name] = (
-        current.$1 + item.quantity,
-        current.$2 + item.subtotal,
-      );
-    }
-    final sorted = totals.entries.toList()
-      ..sort((a, b) => b.value.$1.compareTo(a.value.$1));
-    return [
-      for (final entry in sorted.take(limit))
-        (name: entry.key, quantity: entry.value.$1, revenue: entry.value.$2),
-    ];
   }
 }

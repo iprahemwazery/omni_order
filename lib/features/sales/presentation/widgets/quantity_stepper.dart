@@ -20,6 +20,8 @@ class QuantityStepper extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final canIncrement = maxQuantity == null || quantity + step <= maxQuantity!;
+    // الحد الأدنى للكمية هو خطوة واحدة (لا ننزل لأقل من صفر ولا لقيمة بلا معنى).
+    final canDecrement = quantity - step >= step;
     return Container(
       decoration: BoxDecoration(
         border: Border.all(color: AppColors.border),
@@ -42,7 +44,7 @@ class QuantityStepper extends StatelessWidget {
           ),
           _Button(
             icon: Icons.remove,
-            onTap: () => onChanged(quantity - step),
+            onTap: canDecrement ? () => onChanged(quantity - step) : null,
           ),
         ],
       ),

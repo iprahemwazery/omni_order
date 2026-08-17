@@ -88,8 +88,9 @@ class _PurchaseFormScreenState extends State<PurchaseFormScreen> {
     if (quantity == null || quantity <= 0) return 'أدخل كمية صحيحة.';
 
     final purchasePrice = double.tryParse(_purchasePrice.text);
-    if (purchasePrice == null || purchasePrice < 0)
+    if (purchasePrice == null || purchasePrice < 0) {
       return 'أدخل سعر شراء صحيحًا.';
+    }
 
     if (_selectedProduct == null) {
       final name = _newProductName.text.trim();
@@ -153,12 +154,14 @@ class _PurchaseFormScreenState extends State<PurchaseFormScreen> {
         : null;
 
     if (error != null) {
+      if (!mounted) return;
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text(error)));
       return;
     }
 
+    if (!mounted) return;
     final created =
         productToUse ??
         context.read<ProductsCubit>().state.products.firstWhere(

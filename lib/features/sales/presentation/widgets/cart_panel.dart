@@ -9,10 +9,18 @@ import 'quantity_stepper.dart';
 
 /// لوحة السلة أثناء البيع: قائمة الأصناف + الإجمالي + زر إتمام البيع.
 class CartPanel extends StatelessWidget {
-  const CartPanel({super.key, this.onComplete, this.isSheet = false});
+  const CartPanel({
+    super.key,
+    this.onComplete,
+    this.onHold,
+    this.isSheet = false,
+  });
 
   /// يُستدعى عند الضغط على "إتمام البيع".
   final VoidCallback? onComplete;
+
+  /// يُستدعى عند الضغط على "تعليق السلة" (حفظها محليًا).
+  final VoidCallback? onHold;
   final bool isSheet;
 
   @override
@@ -48,7 +56,7 @@ class CartPanel extends StatelessWidget {
             },
           ),
         ),
-        _Footer(onComplete: onComplete),
+        _Footer(onComplete: onComplete, onHold: onHold),
       ],
     );
   }
@@ -140,9 +148,10 @@ class _CartLineTile extends StatelessWidget {
 }
 
 class _Footer extends StatelessWidget {
-  const _Footer({this.onComplete});
+  const _Footer({this.onComplete, this.onHold});
 
   final VoidCallback? onComplete;
+  final VoidCallback? onHold;
 
   @override
   Widget build(BuildContext context) {
@@ -175,13 +184,27 @@ class _Footer extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 12),
-          SizedBox(
-            width: double.infinity,
-            child: FilledButton.icon(
-              onPressed: onComplete,
-              icon: const Icon(Icons.receipt_long),
-              label: const Text('إتمام البيع'),
-            ),
+          Row(
+            children: [
+              if (onHold != null) ...[
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: onHold,
+                    icon: const Icon(Icons.pause_circle_outline),
+                    label: const Text('تعليق'),
+                  ),
+                ),
+                const SizedBox(width: 10),
+              ],
+              Expanded(
+                flex: 2,
+                child: FilledButton.icon(
+                  onPressed: onComplete,
+                  icon: const Icon(Icons.receipt_long),
+                  label: const Text('إتمام البيع'),
+                ),
+              ),
+            ],
           ),
         ],
       ),

@@ -1,13 +1,10 @@
-import 'dart:io';
-
 import 'package:flutter/services.dart';
-import 'package:media_store_plus/media_store_plus.dart';
-import 'package:open_filex/open_filex.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 
+import '../../../../core/constants/payment_methods.dart';
 import '../../../../core/utils/formatters.dart';
+import '../../../../core/utils/pdf_exporter.dart';
 import '../../../../domain/models/sale.dart';
 import '../../../../domain/models/sale_item.dart';
 import '../../../../domain/models/store_settings.dart';
@@ -16,8 +13,6 @@ import '../../../../domain/models/store_settings.dart';
 class ReceiptPdfExporter {
   ReceiptPdfExporter._();
 
-  static bool _mediaStoreInitialized = false;
-
   /// يبني بيانات الفاتورة كملف PDF جاهز للحفظ.
   static Future<Uint8List> buildReceipt({
     required Sale sale,
@@ -25,20 +20,14 @@ class ReceiptPdfExporter {
     required StoreSettings settings,
     String? customerName,
   }) async {
-    final fontData = await rootBundle.load('assets/fonts/Cairo.ttf');
-    final font = pw.Font.ttf(fontData);
-
-    final doc = pw.Document(
-      theme: pw.ThemeData.withFont(base: font),
-    );
+    final doc = await PdfExporter.newDocument();
 
     doc.addPage(
       pw.Page(
         pageFormat: PdfPageFormat.a4,
         margin: const pw.EdgeInsets.all(24),
-        build: (context) => pw.Directionality(
-          textDirection: pw.TextDirection.rtl,
-          child: pw.Padding(
+        build: (context) => PdfExporter.rtl(
+          pw.Padding(
             padding: const pw.EdgeInsets.all(4),
             child: _buildContent(sale, items, settings, customerName),
           ),
@@ -178,6 +167,14 @@ class ReceiptPdfExporter {
             color: PdfColors.red600,
           ),
         ],
+        if (sale.taxAmount > 0) ...[
+          pw.SizedBox(height: 6),
+          _TotalRow(
+            label: 'قيمة الضريبة (${AppFormatters.percent(sale.taxRate)})',
+            value: AppFormatters.money(sale.taxAmount, settings.currency),
+            color: PdfColors.blueGrey700,
+          ),
+        ],
         pw.SizedBox(height: 10),
         pw.Divider(color: PdfColors.grey300),
         pw.SizedBox(height: 10),
@@ -198,6 +195,45 @@ class ReceiptPdfExporter {
             ),
           ],
         ),
+        if (sale.taxAmount > 0) ...[
+          pw.SizedBox(height: 2),
+          pw.Text(
+            'شامل ضريبة القيمة المضافة',
+            textAlign: pw.TextAlign.center,
+            style: pw.TextStyle(fontSize: 9, color: PdfColors.grey600),
+          ),
+        ],
+        if (sale.paymentMethod == PaymentMethod.mixed) ...[
+          pw.SizedBox(height: 8),
+          _TotalRow(
+            label: 'نقدًا',
+            value: AppFormatters.money(
+              sale.total - sale.cardAmount,
+              settings.currency,
+            ),
+          ),
+          pw.SizedBox(height: 4),
+          _TotalRow(
+            label: 'بالشبكة',
+            value: AppFormatters.money(sale.cardAmount, settings.currency),
+            color: PdfColors.teal700,
+          ),
+        ] else if (sale.amountTendered > sale.total) ...[
+          pw.SizedBox(height: 8),
+          _TotalRow(
+            label: 'المدفوع',
+            value: AppFormatters.money(
+              sale.amountTendered,
+              settings.currency,
+            ),
+          ),
+          pw.SizedBox(height: 4),
+          _TotalRow(
+            label: 'الباقي للعميل',
+            value: AppFormatters.money(sale.changeDue, settings.currency),
+            color: PdfColors.green700,
+          ),
+        ],
         pw.SizedBox(height: 10),
         pw.Container(
           padding: const pw.EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -223,7 +259,7 @@ class ReceiptPdfExporter {
             ),
           ),
         ],
-        if (sale.paymentMethod == 'آجل') ...[
+        if (sale.paymentMethod == PaymentMethod.deferred) ...[
           pw.SizedBox(height: 8),
           pw.Text(
             customerName == null
@@ -277,49 +313,13 @@ class ReceiptPdfExporter {
 
   /// يحفظ ملف PDF في مجلد التنزيلات العام (عبر MediaStore على أندرويد).
   /// يعيد وصف مكان الحفظ عند النجاح، أو null عند الفشل.
-  static Future<String?> saveToDownloads(Uint8List bytes, String fileName) async {
-    if (!Platform.isAndroid) {
-      final dir = await getApplicationDocumentsDirectory();
-      final file = File('${dir.path}/$fileName');
-      await file.writeAsBytes(bytes);
-      return 'مستندات التطبيق';
-    }
-
-    final tempDir = await getTemporaryDirectory();
-    final tempFile = File('${tempDir.path}/$fileName');
-    await tempFile.writeAsBytes(bytes);
-
-    if (!_mediaStoreInitialized) {
-      await MediaStore.ensureInitialized();
-      _mediaStoreInitialized = true;
-    }
-    MediaStore.appFolder = 'OmniOrder';
-
-    final store = MediaStore();
-    final info = await store.saveFile(
-      tempFilePath: tempFile.path,
-      dirType: DirType.download,
-      dirName: DirName.download,
-      relativePath: FilePath.root,
-    );
-
-    if (info == null) return null;
-    return 'مجلد التنزيلات';
-  }
+  static Future<String?> saveToDownloads(Uint8List bytes, String fileName) =>
+      PdfExporter.saveToDownloads(bytes, fileName);
 
   /// يعرض ملف PDF عبر التطبيق المثبّت للعرض (نسخة داخل التطبيق).
   /// يعيد true إذا فُتح بنجاح.
-  static Future<bool> openPdf(Uint8List bytes, String fileName) async {
-    try {
-      final dir = await getTemporaryDirectory();
-      final file = File('${dir.path}/open_$fileName');
-      await file.writeAsBytes(bytes);
-      final result = await OpenFilex.open(file.path);
-      return result.type == ResultType.done;
-    } catch (_) {
-      return false;
-    }
-  }
+  static Future<bool> openPdf(Uint8List bytes, String fileName) =>
+      PdfExporter.openPdf(bytes, fileName);
 }
 
 class _InfoCell extends pw.StatelessWidget {

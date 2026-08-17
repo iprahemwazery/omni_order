@@ -1,112 +1,48 @@
-import 'dart:convert';
-import 'dart:io';
+import 'package:omni_order/core/config/supabase_config.dart';
+import 'package:omni_order/domain/models/license.dart';
+import 'package:omni_order/domain/repositories/license_repository.dart';
 
-import 'package:crypto/crypto.dart';
-import 'package:device_info_plus/device_info_plus.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
+import '../repositories/supabase_license_repository.dart';
+import 'device_fingerprint_service.dart';
 
-import '../../core/config/supabase_config.dart';
-
+/// خدمة الترخيص — نقطة التنسيق بين بصمة الجهاز ومستودع الترخيص (Supabase).
+///
+/// توفر عمليات رفيعة المستوى:
+/// - [activateOrVerify]: تحقق/تفعيل أونلاين عبر RPC (وحفظ محلي عند النجاح).
+/// - [checkOffline]: تحقق محلي من التفعيل المشفر (وضع عدم الاتصال).
+/// - [clearLicense]: مسح التفعيل المحلي.
 class LicenseService {
-  /// يُقيَّم عند الاستخدام فقط حتى لا ينهار في الاختبارات.
-  SupabaseClient get _supabase => Supabase.instance.client;
+  LicenseService({
+    LicenseRepository? repository,
+    DeviceFingerprintService? fingerprintService,
+  })  : _repository = repository ?? SupabaseLicenseRepository(),
+        _fingerprint = fingerprintService ?? DeviceFingerprintService();
 
-  /// هل Supabase مهيأ وجاهز للعمل؟
+  final LicenseRepository _repository;
+  final DeviceFingerprintService _fingerprint;
+
+  /// هل Supabase مهيأ وجاهز للعمل؟ (البوابة الأمنية مفعّلة فقط عندها).
   bool get isReady => SupabaseConfig.isReady;
 
-  /// تسجيل الخروج من Supabase Auth.
-  Future<void> signOut() async {
-    if (!isReady) return;
-    try {
-      await _supabase.auth.signOut();
-    } catch (_) {
-      // تجاهل أخطاء تسجيل الخروج.
-    }
+  /// بصمة الجهاز الحالي (SHA-256 للمعرّف الأصلي).
+  Future<String> getDeviceId() => _fingerprint.getDeviceFingerprint();
+
+  /// تحقق/تفعيل عبر الإنترنت باستدعاء RPC، مع بصمة الجهاز الحالية.
+  /// عند النجاح يُحفظ التفعيل محلياً تلقائياً.
+  Future<LicenseResult> activateOrVerify(String licenseKey) async {
+    final deviceId = await _fingerprint.getDeviceFingerprint();
+    return _repository.activateOrVerify(
+      licenseKey: licenseKey,
+      deviceId: deviceId,
+    );
   }
 
-  // 1. جلب بصمة الجهاز الفريدة (HWID)
-  Future<String> getDeviceFingerprint() async {
-    final deviceInfo = DeviceInfoPlugin();
-    String rawId = '';
-
-    if (Platform.isWindows) {
-      final win = await deviceInfo.windowsInfo;
-      rawId =
-          '${win.deviceId}-${win.numberOfCores}-${win.systemMemoryInMegabytes}';
-    } else if (Platform.isAndroid) {
-      final android = await deviceInfo.androidInfo;
-      rawId = android.id;
-    } else if (Platform.isLinux) {
-      final linux = await deviceInfo.linuxInfo;
-      rawId = linux.machineId ?? linux.id;
-    }
-
-    return sha256.convert(utf8.encode(rawId)).toString();
+  /// تحقق محلي (وضع عدم الاتصال) من التفعيل المشفر وبصمة الجهاز الحالية.
+  Future<LicenseResult> checkOffline() async {
+    final deviceId = await _fingerprint.getDeviceFingerprint();
+    return _repository.checkStoredActivation(deviceId);
   }
 
-  // 2. التحقق وتسجيل الترخيص
-  Future<String?> loginAndVerifyLicense({
-    required String email,
-    required String password,
-  }) async {
-    try {
-      if (!isReady) {
-        return "لم يتم تهيئة Supabase بعد. ضع بيانات مشروعك في lib/core/config/supabase_config.dart";
-      }
-
-      // أ- تسجيل الدخول في Supabase Auth
-      final authResponse = await _supabase.auth.signInWithPassword(
-        email: email,
-        password: password,
-      );
-
-      final user = authResponse.user;
-      if (user == null) return "بيانات الدخول غير صحيحة";
-
-      final deviceId = await getDeviceFingerprint();
-
-      // ب- الاستعلام عن ترخيص هذا الجهاز
-      final response = await _supabase
-          .from('licenses')
-          .select()
-          .eq('user_id', user.id)
-          .eq('device_id', deviceId)
-          .maybeSingle();
-
-      // ج- لو الجهاز جديد، نسجله لأول مرة تلقائياً (ترخيص لمدة سنة)
-      if (response == null) {
-        await _supabase.from('licenses').insert({
-          'user_id': user.id,
-          'device_id': deviceId,
-          'is_active': true,
-          'expires_at': DateTime.now()
-              .add(const Duration(days: 365))
-              .toIso8601String(),
-        });
-        return null; // نجاح التفعيل لأول مرة
-      }
-
-      // د- التأكد من حالة وصلاحية الترخيص
-      final isActive = response['is_active'] as bool;
-      final expiresAt = DateTime.parse(response['expires_at']);
-
-      if (!isActive) {
-        return "تم إيقاف الترخيص لهذا الجهاز من قبل الإدارة.";
-      }
-
-      if (expiresAt.isBefore(DateTime.now())) {
-        return "لقد انتهت فترة الاشتراك الخاصة بك.";
-      }
-
-      return null; // الترخيص ساري بنجاح
-    } on AuthException catch (e) {
-      return 'فشل تسجيل الدخول: ${e.message}';
-    } on PostgrestException catch (e) {
-      // أشهر الأسباب: جدول licenses غير موجود، RLS بدون بوليصات،
-      // أو اسم/نوع عمود مختلف عن المتوقع.
-      return 'خطأ في جدول الترخيص (${e.code ?? 'بدون كود'}): ${e.message}';
-    } catch (e) {
-      return 'حدث خطأ غير متوقع: $e';
-    }
-  }
+  /// مسح التفعيل المحلي.
+  Future<void> clearLicense() => _repository.clearStoredActivation();
 }

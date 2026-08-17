@@ -7,7 +7,9 @@ import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 
 import '../../../core/theme/app_colors.dart';
+import '../../../core/utils/error_utils.dart';
 import '../../../core/utils/formatters.dart';
+import '../../../core/utils/pdf_exporter.dart';
 import '../../../domain/models/purchase.dart';
 import '../../../domain/models/supplier.dart';
 import '../../purchases/presentation/purchases_cubit.dart';
@@ -55,8 +57,10 @@ class _SupplierReportsScreenState extends State<SupplierReportsScreen> {
           IconButton(
             tooltip: 'تحديث',
             onPressed: () async {
-              await context.read<SuppliersCubit>().refresh();
-              await context.read<PurchasesCubit>().refresh();
+              final suppliersCubit = context.read<SuppliersCubit>();
+              final purchasesCubit = context.read<PurchasesCubit>();
+              await suppliersCubit.refresh();
+              await purchasesCubit.refresh();
             },
             icon: const Icon(Icons.refresh_outlined),
           ),
@@ -303,8 +307,9 @@ class _SupplierReportsScreenState extends State<SupplierReportsScreen> {
 
     final list = <_SupplierBalance>[];
     for (final supplier in suppliers) {
-      if (selectedSupplierId != null && supplier.id != selectedSupplierId)
+      if (selectedSupplierId != null && supplier.id != selectedSupplierId) {
         continue;
+      }
       if (supplier.name.trim().isEmpty) continue;
       list.add(
         _SupplierBalance(
@@ -360,7 +365,7 @@ class _SupplierReportsScreenState extends State<SupplierReportsScreen> {
     List<Supplier> suppliers,
     String currency,
   ) async {
-    final doc = pw.Document();
+    final doc = await PdfExporter.newDocument();
     doc.addPage(
       pw.Page(
         pageFormat: PdfPageFormat.a4,
@@ -397,36 +402,55 @@ class _SupplierReportsScreenState extends State<SupplierReportsScreen> {
             ),
           ];
 
-          return pw.Column(
-            crossAxisAlignment: pw.CrossAxisAlignment.start,
-            children: [
-              pw.Text(
-                'تقرير الموردين',
-                style: pw.TextStyle(
-                  fontSize: 22,
-                  fontWeight: pw.FontWeight.bold,
+          return PdfExporter.rtl(
+            pw.Column(
+              crossAxisAlignment: pw.CrossAxisAlignment.start,
+              children: [
+                pw.Text(
+                  'تقرير الموردين',
+                  style: pw.TextStyle(
+                    fontSize: 22,
+                    fontWeight: pw.FontWeight.bold,
+                  ),
                 ),
-              ),
-              pw.SizedBox(height: 12),
-              pw.Text('عدد الفواتير: ${purchases.length}'),
-              pw.SizedBox(height: 16),
-              pw.Table(border: pw.TableBorder.all(), children: rows),
-            ],
+                pw.SizedBox(height: 12),
+                pw.Text('عدد الفواتير: ${purchases.length}'),
+                pw.SizedBox(height: 16),
+                pw.Table(border: pw.TableBorder.all(), children: rows),
+              ],
+            ),
           );
         },
       ),
     );
 
-    final dir = await getApplicationDocumentsDirectory();
-    final file = File(
-      '${dir.path}/supplier_report_${DateTime.now().millisecondsSinceEpoch}.pdf',
-    );
-    await file.writeAsBytes(await doc.save());
-
-    if (!context.mounted) return;
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text('تم حفظ ملف PDF في: ${file.path}')));
+    try {
+      final bytes = await doc.save();
+      final fileName =
+          'supplier_report_${DateTime.now().millisecondsSinceEpoch}.pdf';
+      final location = await PdfExporter.saveToDownloads(bytes, fileName);
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text(
+              location == null
+                  ? 'تعذر حفظ تقرير الموردين في مجلد التنزيلات'
+                  : 'تم حفظ تقرير الموردين في $location: $fileName',
+            ),
+          ),
+        );
+    } catch (e) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text(safeErrorMessage('تعذر حفظ تقرير الموردين', e)),
+          ),
+        );
+    }
   }
 }
 
@@ -469,7 +493,7 @@ class _FilterPanel extends StatelessWidget {
           ),
           const SizedBox(height: 10),
           DropdownButtonFormField<int?>(
-            value: selectedSupplierId,
+            initialValue: selectedSupplierId,
             decoration: const InputDecoration(
               labelText: 'المورد',
               border: OutlineInputBorder(),
@@ -580,7 +604,7 @@ class _MiniChip extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.12),
+        color: Colors.white.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(999),
       ),
       child: Row(

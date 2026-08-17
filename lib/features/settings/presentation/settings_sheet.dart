@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../core/theme/app_colors.dart';
+import '../../../core/utils/error_utils.dart';
 import '../../../data/services/backup_service.dart';
 import '../../../domain/models/admin.dart';
 import '../../auth/presentation/admin_login_dialog.dart';
@@ -29,6 +30,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
   late final TextEditingController _name;
   late final TextEditingController _phone;
   late final TextEditingController _currency;
+  late final TextEditingController _tax;
   bool _saving = false;
 
   @override
@@ -38,6 +40,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
     _name = TextEditingController(text: settings.storeName);
     _phone = TextEditingController(text: settings.phone);
     _currency = TextEditingController(text: settings.currency);
+    _tax = TextEditingController(text: settings.taxRate.toString());
   }
 
   @override
@@ -45,6 +48,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
     _name.dispose();
     _phone.dispose();
     _currency.dispose();
+    _tax.dispose();
     super.dispose();
   }
 
@@ -58,6 +62,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
             : _name.text.trim(),
         phone: _phone.text.trim(),
         currency: _currency.text.trim().isEmpty ? 'ج.م' : _currency.text.trim(),
+        taxRate: double.tryParse(_tax.text) ?? 0,
       ),
     );
     if (!mounted) return;
@@ -80,7 +85,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
     if (current == null) return;
 
     if (current.role == UserRole.cashier) {
-      await showAdminLoginDialog(context, switching: true);
+      await showAdminLoginDialog(context);
       if (!mounted) return;
       Navigator.of(context).pop();
       return;
@@ -128,7 +133,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('تعذر إنشاء النسخة الاحتياطية: $e')),
+        SnackBar(content: Text(safeErrorMessage('تعذر إنشاء النسخة الاحتياطية', e))),
       );
     }
   }
@@ -173,7 +178,82 @@ class _SettingsSheetState extends State<_SettingsSheet> {
       if (!mounted) return;
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(SnackBar(content: Text('تعذرت الاستعادة: $e')));
+      ).showSnackBar(SnackBar(
+          content: Text(safeErrorMessage('تعذرت الاستعادة', e))));
+    }
+  }
+
+  Future<void> _exportBackupToDownloads() async {
+    try {
+      final location = await BackupService.createBackupInDownloads();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            location == null
+                ? 'تعذر تصدير النسخة الاحتياطية.'
+                : 'تم تصدير نسخة احتياطية إلى $location.',
+          ),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+            content: Text(
+                safeErrorMessage('تعذر تصدير النسخة الاحتياطية', e))),
+      );
+    }
+  }
+
+  Future<void> _cloudSync() async {
+    final action = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('المزامنة السحابية'),
+        content: const Text(
+          'ارفع أحدث نسخة من بياناتك إلى السحابة، أو اسحب آخر نسخة محفوظة واستعدها على هذا الجهاز.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('إلغاء'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop('upload'),
+            child: const Text('رفع نسخة'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop('download'),
+            child: const Text('سحب واستعادة'),
+          ),
+        ],
+      ),
+    );
+    if (action == null || !mounted) return;
+
+    try {
+      if (action == 'upload') {
+        final name = await BackupService.uploadBackupToCloud();
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('تم رفع النسخة الاحتياطية إلى السحابة: $name')),
+        );
+      } else {
+        final count = await BackupService.downloadLatestFromCloud();
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('تم سحب أحدث نسخة واستعادتها ($count نسخة في السحابة).'),
+          ),
+        );
+        Navigator.of(context).pop();
+      }
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(safeErrorMessage('تعذرت المزامنة السحابية', e))),
+      );
     }
   }
 
@@ -227,6 +307,18 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                   prefixIcon: Icon(Icons.currency_exchange),
                 ),
               ),
+              const SizedBox(height: 14),
+              TextField(
+                controller: _tax,
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
+                decoration: const InputDecoration(
+                  labelText: 'نسبة الضريبة % (اختياري)',
+                  hintText: 'مثال: 14',
+                  prefixIcon: Icon(Icons.percent),
+                ),
+              ),
               const SizedBox(height: 16),
               FilledButton(
                 onPressed: _saving ? null : _save,
@@ -257,6 +349,20 @@ class _SettingsSheetState extends State<_SettingsSheet> {
               title: 'استعادة نسخة',
               subtitle: 'استرجاع آخر نسخة احتياطية محفوظة',
               onTap: _restoreBackup,
+            ),
+            const SizedBox(height: 10),
+            _SheetAction(
+              icon: Icons.download_outlined,
+              title: 'تصدير للتنزيلات',
+              subtitle: 'حفظ نسخة من البيانات في مجلد التنزيلات',
+              onTap: _exportBackupToDownloads,
+            ),
+            const SizedBox(height: 10),
+            _SheetAction(
+              icon: Icons.cloud_upload_outlined,
+              title: 'مزامنة سحابية',
+              subtitle: 'رفع نسخة أو استعادتها عبر Supabase',
+              onTap: _cloudSync,
             ),
             const SizedBox(height: 10),
             _SheetAction(

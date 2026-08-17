@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
+import '../../../core/constants/payment_methods.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/utils/formatters.dart';
 import '../../../domain/models/expense.dart';
@@ -22,7 +23,7 @@ class DailyReportScreen extends StatelessWidget {
   final List<Expense> expenses;
 
   List<Sale> get _deferredSales =>
-      sales.where((s) => s.paymentMethod == 'آجل').toList();
+      sales.where((s) => s.paymentMethod == PaymentMethod.deferred).toList();
 
   double get cashRevenue =>
       sales.fold(0.0, (sum, s) => sum + s.total) -
@@ -152,9 +153,13 @@ class _DayNetBanner extends StatelessWidget {
             children: [
               const Icon(Icons.calendar_today, color: Colors.white70, size: 18),
               const SizedBox(width: 8),
-              Text(
-                '${AppFormatters.arabicWeekday(day)} • ${AppFormatters.arabicDate(day)}',
-                style: const TextStyle(color: Colors.white70, fontSize: 14),
+              Flexible(
+                child: Text(
+                  '${AppFormatters.arabicWeekday(day)} • ${AppFormatters.arabicDate(day)}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(color: Colors.white70, fontSize: 14),
+                ),
               ),
             ],
           ),

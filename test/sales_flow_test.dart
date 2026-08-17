@@ -62,6 +62,8 @@ void main() {
     expect(find.text('نقدي'), findsOneWidget);
 
     // تأكيد البيع
+    await tester.ensureVisible(find.text('تأكيد البيع'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('تأكيد البيع'));
     await tester.pumpAndSettle();
 

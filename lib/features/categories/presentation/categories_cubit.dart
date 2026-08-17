@@ -1,5 +1,6 @@
 import 'package:flutter_bloc/flutter_bloc.dart';
 
+import '../../../../core/utils/error_utils.dart';
 import '../../../../domain/models/category.dart';
 import '../../../../domain/repositories/store_repository.dart';
 import 'categories_state.dart';
@@ -21,7 +22,7 @@ class CategoriesCubit extends Cubit<CategoriesState> {
       final categories = await _repository.getCategories();
       emit(CategoriesState(categories: categories));
     } catch (e) {
-      emit(state.copyWith(error: 'تعذر تحميل التصنيفات: $e'));
+      emit(state.copyWith(error: safeErrorMessage('تعذر تحميل التصنيفات', e)));
     }
   }
 

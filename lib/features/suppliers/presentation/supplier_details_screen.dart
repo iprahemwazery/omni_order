@@ -1,13 +1,12 @@
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 
 import '../../../core/theme/app_colors.dart';
+import '../../../core/utils/error_utils.dart';
 import '../../../core/utils/formatters.dart';
+import '../../../core/utils/pdf_exporter.dart';
 import '../../../domain/models/purchase.dart';
 import '../../../domain/models/supplier.dart';
 import '../../../domain/models/supplier_payment.dart';
@@ -299,7 +298,7 @@ class SupplierDetailsScreen extends StatelessWidget {
     List<Purchase> purchases,
     String currency,
   ) async {
-    final doc = pw.Document();
+    final doc = await PdfExporter.newDocument();
     doc.addPage(
       pw.Page(
         pageFormat: PdfPageFormat.a4,
@@ -339,38 +338,55 @@ class SupplierDetailsScreen extends StatelessWidget {
             ),
           ];
 
-          return pw.Column(
-            crossAxisAlignment: pw.CrossAxisAlignment.start,
-            children: [
-              pw.Text(
-                'فواتير مورد: ${supplier.name}',
-                style: pw.TextStyle(
-                  fontSize: 22,
-                  fontWeight: pw.FontWeight.bold,
+          return PdfExporter.rtl(
+            pw.Column(
+              crossAxisAlignment: pw.CrossAxisAlignment.start,
+              children: [
+                pw.Text(
+                  'فواتير مورد: ${supplier.name}',
+                  style: pw.TextStyle(
+                    fontSize: 22,
+                    fontWeight: pw.FontWeight.bold,
+                  ),
                 ),
-              ),
-              pw.SizedBox(height: 10),
-              pw.Text(
-                'إجمالي المديونية: ${AppFormatters.money(supplier.balance, currency)}',
-              ),
-              pw.SizedBox(height: 12),
-              pw.Table(border: pw.TableBorder.all(), children: rows),
-            ],
+                pw.SizedBox(height: 10),
+                pw.Text(
+                  'إجمالي المديونية: ${AppFormatters.money(supplier.balance, currency)}',
+                ),
+                pw.SizedBox(height: 12),
+                pw.Table(border: pw.TableBorder.all(), children: rows),
+              ],
+            ),
           );
         },
       ),
     );
 
-    final dir = await getApplicationDocumentsDirectory();
-    final file = File(
-      '${dir.path}/supplier_${supplier.id}_${DateTime.now().millisecondsSinceEpoch}.pdf',
-    );
-    await file.writeAsBytes(await doc.save());
-
-    if (!context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('تم حفظ تقرير المورد في: ${file.path}')),
-    );
+    try {
+      final bytes = await doc.save();
+      final fileName =
+          'supplier_${supplier.id}_${DateTime.now().millisecondsSinceEpoch}.pdf';
+      final location = await PdfExporter.saveToDownloads(bytes, fileName);
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text(
+              location == null
+                  ? 'تعذر حفظ تقرير المورد في مجلد التنزيلات'
+                  : 'تم حفظ تقرير المورد في $location: $fileName',
+            ),
+          ),
+        );
+    } catch (e) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(content: Text(safeErrorMessage('تعذر حفظ تقرير المورد', e))),
+        );
+    }
   }
 }
 

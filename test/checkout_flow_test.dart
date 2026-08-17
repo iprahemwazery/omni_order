@@ -57,6 +57,8 @@ void main() {
     expect(find.text('9 ج.م'), findsOneWidget);
 
     // تأكيد البيع والانتقال للفاتورة
+    await tester.ensureVisible(find.text('تأكيد البيع'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('تأكيد البيع'));
     await tester.pumpAndSettle();
     expect(find.text('الفاتورة'), findsOneWidget);
@@ -113,6 +115,8 @@ void main() {
     expect(find.text('سارة'), findsOneWidget);
 
     // تأكيد البيع الآجل وربطه بالعميل الجديد
+    await tester.ensureVisible(find.text('تأكيد البيع'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('تأكيد البيع'));
     await tester.pumpAndSettle();
     expect(find.text('الفاتورة'), findsOneWidget);

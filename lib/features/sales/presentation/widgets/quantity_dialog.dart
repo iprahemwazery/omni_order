@@ -40,6 +40,9 @@ class _QuantityDialogState extends State<_QuantityDialog> {
     _quantity = _step;
     _controller = TextEditingController(text: _format(_quantity));
     _available = context.read<CartCubit>().state.availableStockOf(product);
+    if ((_available ?? product.stock) <= 0) {
+      _error = 'عذرًا، هذا الصنف نفد من المخزون';
+    }
   }
 
   @override
@@ -74,6 +77,10 @@ class _QuantityDialogState extends State<_QuantityDialog> {
 
   void _addToCart() {
     final cart = context.read<CartCubit>();
+    if ((_available ?? product.stock) <= 0) {
+      setState(() => _error = 'عذرًا، هذا الصنف نفد من المخزون');
+      return;
+    }
     final error = cart.addToCart(product, _quantity);
     if (error != null) {
       setState(() => _error = error);

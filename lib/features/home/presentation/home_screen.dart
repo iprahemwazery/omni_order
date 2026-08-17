@@ -24,6 +24,7 @@ import '../../customers/presentation/customers_screen.dart';
 import '../../expenses/presentation/expenses_screen.dart';
 import '../../suppliers/presentation/suppliers_screen.dart';
 import '../../sales/presentation/sales_history_screen.dart';
+import '../../sales/presentation/shift_screen.dart';
 import '../../sales/presentation/reports_screen.dart';
 
 /// الشاشة الرئيسية: ملخص اليوم + بوابات التطبيق.
@@ -110,20 +111,20 @@ class HomeScreen extends StatelessWidget {
                     ),
                     const SizedBox(height: 20),
                     _TodaySummary(
-                      revenueToday: sales.cashRevenueOn(DateTime.now()),
-                      deferredToday: sales.deferredOn(DateTime.now()),
-                      salesCount: sales.sales.length,
+                      revenueToday: sales.totals.cashToday,
+                      deferredToday: sales.totals.deferredToday,
+                      salesCount: sales.totals.countToday,
                       productsCount: products.products.length,
                       totalDebts: customers.totalDebts,
-                      expensesToday: expenses.expensesOn(DateTime.now()),
+                      expensesToday: expenses.totals.today,
                       currency: settings.settings.currency,
                     ),
                     if (products.outOfStock.isNotEmpty ||
-                        products.lowStock().isNotEmpty) ...[
+                        products.lowStock.isNotEmpty) ...[
                       const SizedBox(height: 16),
                       _StockAlertBanner(
                         outOfStock: products.outOfStock.length,
-                        lowStock: products.lowStock().length,
+                        lowStock: products.lowStock.length,
                       ),
                     ],
                     const SizedBox(height: 24),
@@ -432,6 +433,15 @@ class _ActionsGrid extends StatelessWidget {
           onTap: () => Navigator.of(
             context,
           ).push(MaterialPageRoute(builder: (_) => const SalesHistoryScreen())),
+        ),
+      if (admin != null && admin.has(UserPermission.viewSales))
+        _ActionCard(
+          title: 'الوردية',
+          subtitle: 'تقرير Z ومرتجعات الكاشير',
+          icon: Icons.event_note_outlined,
+          onTap: () => Navigator.of(
+            context,
+          ).push(MaterialPageRoute(builder: (_) => const ShiftScreen())),
         ),
       if (admin != null && admin.has(UserPermission.manageCustomers))
         _ActionCard(

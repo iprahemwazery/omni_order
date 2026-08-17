@@ -21,8 +21,8 @@ void main() {
 
   // فتح شاشة التقارير (كارت أسفل الشاشة الرئيسية — نمرّر له أولًا).
   Future<void> openReports(WidgetTester tester) async {
-    await tester.scrollUntilVisible(find.text('التقارير'), 200,
-        scrollable: find.byType(Scrollable).first);
+    await tester.ensureVisible(find.text('التقارير'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('التقارير'));
     await tester.pumpAndSettle();
   }
@@ -163,8 +163,8 @@ void main() {
 
     // فتح تقرير اليوم المنفصل يعرض فواتير اليوم ومصروفاته.
     final weekday = AppFormatters.arabicWeekday(pastDay);
-    await tester.scrollUntilVisible(find.text(weekday).first, 200,
-        scrollable: find.byType(Scrollable).first);
+    await tester.ensureVisible(find.text(weekday).first);
+    await tester.pumpAndSettle();
     await tester.tap(find.text(weekday).first);
     await tester.pumpAndSettle();
 

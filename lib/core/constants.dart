@@ -5,7 +5,7 @@ class AppConstants {
   static const String appName = 'أومني أوردر';
 
   static const String dbName = 'omni_order.db';
-  static const int dbVersion = 9;
+  static const int dbVersion = 13;
 
   static const String defaultStoreName = 'متجري';
   static const String defaultCurrency = 'ج.م';

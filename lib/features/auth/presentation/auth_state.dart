@@ -3,17 +3,17 @@ import 'package:equatable/equatable.dart';
 import '../../../../domain/models/admin.dart';
 
 enum AuthStatus {
-  /// جارٍ التحقق من وجود أدمن (شاشة التحميل).
+  /// جارٍ التحقق من الترخيص وحالة الأدمن (شاشة التحميل).
   loading,
+
+  /// لا يوجد ترخيص مفعّل — تُعرض شاشة إدخال مفتاح الترخيص (البوابة الأولى).
+  activation,
 
   /// لا يوجد أي أدمن بعد — أول مرة (شاشة إنشاء الأدمن الأساسي).
   setup,
 
-  /// يوجد أدمن لكن لم يسجل الدخول (شاشة تسجيل الدخول).
+  /// يوجد أدمن لكن لم يسجل الدخول (شاشة تسجيل الدخول المحلية).
   unauthenticated,
-
-  /// نجح الدخول من Supabase وبقي اختيار الدور (أدمن أو كاشير).
-  chooseRole,
 
   /// أدمن مسجل الدخول (الشاشة الرئيسية).
   authenticated,
@@ -25,7 +25,6 @@ class AuthState extends Equatable {
     this.status = AuthStatus.loading,
     this.admin,
     this.admins = const [],
-    this.pendingEmail,
     this.error,
   });
 
@@ -33,8 +32,7 @@ class AuthState extends Equatable {
   final Admin? admin;
   final List<Admin> admins;
 
-  /// الإيميل الذي نجح دخوله من Supabase وانتظر اختيار الدور.
-  final String? pendingEmail;
+  /// رسالة خطأ عربية (تظهر في شاشة التفعيل/الدخول).
   final String? error;
 
   bool get isSuperAdmin => admin?.isSuperAdmin ?? false;
@@ -43,7 +41,6 @@ class AuthState extends Equatable {
     AuthStatus? status,
     Admin? admin,
     List<Admin>? admins,
-    String? pendingEmail,
     String? error,
     bool clearError = false,
   }) {
@@ -51,11 +48,10 @@ class AuthState extends Equatable {
       status: status ?? this.status,
       admin: admin ?? this.admin,
       admins: admins ?? this.admins,
-      pendingEmail: pendingEmail ?? this.pendingEmail,
       error: clearError ? null : (error ?? this.error),
     );
   }
 
   @override
-  List<Object?> get props => [status, admin, admins, pendingEmail, error];
+  List<Object?> get props => [status, admin, admins, error];
 }

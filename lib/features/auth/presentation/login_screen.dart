@@ -5,7 +5,7 @@ import '../../../core/constants.dart';
 import '../../../core/theme/app_colors.dart';
 import '../presentation/auth_cubit.dart';
 
-/// شاشة تسجيل الدخول — تصميم احترافي يُعرض قبل الوصول لأي صلاحية في النظام.
+/// شاشة تسجيل الدخول المحلي (أدمن/كاشير) — تظهر بعد ضمان صحة الترخيص.
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
 
@@ -161,7 +161,7 @@ class _LoginScreenState extends State<LoginScreen> {
                           ),
                           const SizedBox(height: 4),
                           const Text(
-                            'أدخل بريدك الإلكتروني وكلمة السر',
+                            'أدخل اسم المستخدم وكلمة السر',
                             textAlign: TextAlign.center,
                             style: TextStyle(
                               fontSize: 13,
@@ -170,14 +170,13 @@ class _LoginScreenState extends State<LoginScreen> {
                           ),
                           const SizedBox(height: 22),
                           TextField(
-                            key: const Key('login_email'),
+                            key: const Key('login_username'),
                             controller: _username,
-                            keyboardType: TextInputType.emailAddress,
                             textInputAction: TextInputAction.next,
                             decoration: const InputDecoration(
-                              labelText: 'البريد الإلكتروني',
-                              hintText: 'example@store.com',
-                              prefixIcon: Icon(Icons.alternate_email),
+                              labelText: 'اسم المستخدم',
+                              hintText: 'اكتب اسم المستخدم',
+                              prefixIcon: Icon(Icons.person_outline),
                             ),
                           ),
                           const SizedBox(height: 14),

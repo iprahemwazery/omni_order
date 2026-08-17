@@ -1,5 +1,6 @@
 import 'package:flutter_bloc/flutter_bloc.dart';
 
+import '../../../../core/utils/error_utils.dart';
 import '../../../../domain/models/product.dart';
 import '../../../../domain/models/purchase.dart';
 import '../../../../domain/models/purchase_item.dart';
@@ -28,7 +29,7 @@ class PurchasesCubit extends Cubit<PurchasesState> {
       final purchases = await _repository.getPurchases();
       emit(PurchasesState(purchases: purchases));
     } catch (e) {
-      emit(state.copyWith(error: 'تعذر تحميل المشتريات: $e'));
+      emit(state.copyWith(error: safeErrorMessage('تعذر تحميل المشتريات', e)));
     }
   }
 
@@ -42,15 +43,17 @@ class PurchasesCubit extends Cubit<PurchasesState> {
   }) async {
     if (lines.isEmpty) return 'أضف صنفًا واحدًا على الأقل.';
     for (final line in lines) {
-      if (line.quantity <= 0)
+      if (line.quantity <= 0) {
         return 'كمية "${line.product.name}" يجب أن تكون أكبر من صفر.';
+      }
       if (line.price < 0) return 'سعر "${line.product.name}" غير صحيح.';
     }
 
     final total = lines.fold(0.0, (sum, l) => sum + l.quantity * l.price);
     if (paidAmount < 0) return 'المبلغ المدفوع لا يمكن أن يكون سالبًا.';
-    if (paidAmount > total)
+    if (paidAmount > total) {
       return 'المبلغ المدفوع لا يمكن أن يكون أكبر من إجمالي الفاتورة.';
+    }
 
     final items = [
       for (final line in lines)

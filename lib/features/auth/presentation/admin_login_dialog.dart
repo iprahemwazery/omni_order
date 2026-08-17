@@ -4,18 +4,11 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../../core/theme/app_colors.dart';
 import 'auth_cubit.dart';
 
-/// نافذة الدخول كأدمن (أو إنشاء الأدمن الأساسي أول مرة).
-///
-/// تُستخدم من شاشة اختيار الدور (بعد تسجيل الدخول) ومن تبديل الدور
-/// داخل التطبيق. لو `switching` صحيح يتم التبديل من كاشير إلى أدمن.
-Future<void> showAdminLoginDialog(
-  BuildContext context, {
-  required bool switching,
-}) async {
+/// نافذة الدخول كأدمن (أو إنشاء الأدمن الأساسي أول مرة) عند التبديل من
+/// كاشير إلى أدمن داخل التطبيق.
+Future<void> showAdminLoginDialog(BuildContext context) async {
   final cubit = context.read<AuthCubit>();
-  final needsCreation = switching
-      ? await cubit.needsAdminAccount()
-      : await cubit.needsAdminCreation();
+  final needsCreation = await cubit.needsAdminAccount();
   if (!context.mounted) return;
 
   final usernameController = TextEditingController();
@@ -26,17 +19,11 @@ Future<void> showAdminLoginDialog(
 
   void submit(StateSetter setDialogState, BuildContext dialogContext) async {
     setDialogState(() => error = null);
-    final result = switching
-        ? await cubit.switchToAdmin(
-            username: usernameController.text,
-            password: passwordController.text,
-            confirmPassword: confirmController.text,
-          )
-        : await cubit.loginAsAdmin(
-            username: usernameController.text,
-            password: passwordController.text,
-            confirmPassword: confirmController.text,
-          );
+    final result = await cubit.switchToAdmin(
+      username: usernameController.text,
+      password: passwordController.text,
+      confirmPassword: confirmController.text,
+    );
     if (!dialogContext.mounted) return;
     if (result != null) {
       setDialogState(() => error = result);

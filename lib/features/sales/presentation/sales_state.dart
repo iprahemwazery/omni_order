@@ -1,80 +1,71 @@
 import 'package:equatable/equatable.dart';
 
+import '../../../../core/constants/payment_methods.dart';
 import '../../../../domain/models/sale.dart';
+import '../../../../domain/models/summaries.dart';
 
 /// حالة سجل المبيعات والملخصات.
+///
+/// [sales] قائمة محدودة لأحدث الفواتير (شاشة السجل)، بينما الأرقام
+/// الإجمالية في [totals] محسوبة داخل قاعدة البيانات بـ SQL حتى لا نحمل
+/// آلاف السجلات إلى الذاكرة عند ضغط العمليات المرتفع.
 class SalesState extends Equatable {
   const SalesState({
     this.sales = const [],
+    this.totals = const SalesTotals(),
     this.loading = false,
     this.error,
   });
 
   final List<Sale> sales;
+  final SalesTotals totals;
   final bool loading;
   final String? error;
 
-  /// الفواتير النشطة (باستثناء المرتجعات — لا تُحتسب في الإيرادات).
-  List<Sale> get activeSales => sales.where((s) => !s.refunded).toList();
+  // ---- إجماليات من ملخص SQL (اليوم/الشهر/الإجمالي) ----
 
-  double revenueOn(DateTime day) => activeSales
-      .where((s) =>
-          s.createdAt.year == day.year &&
-          s.createdAt.month == day.month &&
-          s.createdAt.day == day.day)
+  double get totalRevenue => totals.total;
+  double get totalCashRevenue => totals.totalCash;
+  double get totalDeferred => totals.totalDeferred;
+  double get monthRevenue => totals.month;
+  double get monthCashRevenue => totals.cashMonth;
+  double get monthDeferred => totals.deferredMonth;
+
+  /// مبيعات يوم محدد (تُستخدم لليوم الحالي فقط — دائمًا ضمن القائمة الحديثة).
+  double revenueOn(DateTime day) => sales
+      .where((s) => !s.refunded && _sameDay(s.createdAt, day))
       .fold(0.0, (sum, s) => sum + s.total);
 
-  double get totalRevenue => activeSales.fold(0.0, (sum, s) => sum + s.total);
-
-  double get monthRevenue {
-    final now = DateTime.now();
-    final monthStart = DateTime(now.year, now.month, 1);
-    return activeSales
-        .where((s) => !s.createdAt.isBefore(monthStart))
-        .fold(0.0, (sum, s) => sum + s.total);
-  }
-
-  // ---- الفواتير الآجلة تُعدّ مديونية وليست ربحًا محققًا ----
-
-  List<Sale> get _deferredSales =>
-      activeSales.where((s) => s.paymentMethod == 'آجل').toList();
-
-  double deferredOn(DateTime day) => _deferredSales
-      .where((s) =>
-          s.createdAt.year == day.year &&
-          s.createdAt.month == day.month &&
-          s.createdAt.day == day.day)
+  /// المبيعات الآجلة ليوم محدد.
+  double deferredOn(DateTime day) => sales
+      .where(
+        (s) =>
+            !s.refunded &&
+            s.paymentMethod == PaymentMethod.deferred &&
+            _sameDay(s.createdAt, day),
+      )
       .fold(0.0, (sum, s) => sum + s.total);
-
-  double get monthDeferred {
-    final now = DateTime.now();
-    final monthStart = DateTime(now.year, now.month, 1);
-    return _deferredSales
-        .where((s) => !s.createdAt.isBefore(monthStart))
-        .fold(0.0, (sum, s) => sum + s.total);
-  }
-
-  double get totalDeferred => _deferredSales.fold(0.0, (sum, s) => sum + s.total);
 
   /// إيرادات اليوم المحققة نقدًا/محفظة/تحويل (بدون الآجل).
   double cashRevenueOn(DateTime day) => revenueOn(day) - deferredOn(day);
 
-  double get monthCashRevenue => monthRevenue - monthDeferred;
-
-  double get totalCashRevenue => totalRevenue - totalDeferred;
+  static bool _sameDay(DateTime a, DateTime b) =>
+      a.year == b.year && a.month == b.month && a.day == b.day;
 
   SalesState copyWith({
     List<Sale>? sales,
+    SalesTotals? totals,
     bool? loading,
     String? error,
   }) {
     return SalesState(
       sales: sales ?? this.sales,
+      totals: totals ?? this.totals,
       loading: loading ?? this.loading,
       error: error ?? this.error,
     );
   }
 
   @override
-  List<Object?> get props => [sales, loading, error];
+  List<Object?> get props => [sales, totals, loading, error];
 }

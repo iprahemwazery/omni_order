@@ -1,18 +1,19 @@
 import 'package:flutter_bloc/flutter_bloc.dart';
 
+import '../../../../core/utils/error_utils.dart';
 import '../../../../domain/models/product.dart';
 import '../../../../domain/repositories/store_repository.dart';
 import 'products_state.dart';
 
 /// يدير قائمة الأصناف داخل شاشة المخزون.
 class ProductsCubit extends Cubit<ProductsState> {
-  ProductsCubit(this._repository) : super(const ProductsState(loading: true));
+  ProductsCubit(this._repository) : super(ProductsState(loading: true));
 
   final StoreRepository _repository;
 
   /// التحميل الأولي عند فتح التطبيق (يعرض مؤشر التحميل).
   Future<void> init() async {
-    emit(const ProductsState(loading: true));
+    emit(ProductsState(loading: true));
     await refresh();
   }
 
@@ -22,7 +23,7 @@ class ProductsCubit extends Cubit<ProductsState> {
       final products = await _repository.getProducts();
       emit(ProductsState(products: products));
     } catch (e) {
-      emit(state.copyWith(error: 'تعذر تحميل الأصناف: $e'));
+      emit(state.copyWith(error: safeErrorMessage('تعذر تحميل الأصناف', e)));
     }
   }
 

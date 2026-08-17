@@ -1,20 +1,20 @@
 import 'package:equatable/equatable.dart';
 
+import '../../../../core/constants/payment_methods.dart';
 import '../../../../domain/models/cart_line.dart';
 import '../../../../domain/models/customer.dart';
 import '../../../../domain/models/product.dart';
-
-/// طرق الدفع المدعومة.
-const List<String> kPaymentMethods = ['نقدي', 'محفظة', 'تحويل بنكي', 'آجل'];
 
 /// حالة السلة أثناء عملية البيع.
 class CartState extends Equatable {
   const CartState({
     this.lines = const [],
     this.discount = 0,
-    this.paymentMethod = 'نقدي',
+    this.paymentMethod = PaymentMethod.cash,
     this.selectedCustomer,
     this.note = '',
+    this.amountTendered = 0,
+    this.cardAmount = 0,
     this.completing = false,
   });
 
@@ -23,6 +23,12 @@ class CartState extends Equatable {
   final String paymentMethod;
   final Customer? selectedCustomer;
   final String note;
+
+  /// المبلغ الذي دفعه العميل (لحساب الباقي). صفر = الصافي كاملًا.
+  final double amountTendered;
+
+  /// الجزء المدفوع بالشبكة في حالة الدفع المختلط.
+  final double cardAmount;
   final bool completing;
 
   bool get isEmpty => lines.isEmpty;
@@ -36,6 +42,10 @@ class CartState extends Equatable {
 
   /// الإجمالي النهائي بعد الخصم.
   double get total => (subtotal - discount).clamp(0, double.infinity);
+
+  /// الباقي للعميل إذا دفع أكثر من الصافي.
+  double get changeDue =>
+      (amountTendered - total).clamp(0, double.infinity);
 
   /// الكمية المتبقية القابلة للبيع من صنف (بعد حساب ما بالسلة).
   double availableStockOf(Product product) {
@@ -51,6 +61,8 @@ class CartState extends Equatable {
     String? paymentMethod,
     Customer? selectedCustomer,
     String? note,
+    double? amountTendered,
+    double? cardAmount,
     bool? completing,
   }) {
     return CartState(
@@ -59,6 +71,8 @@ class CartState extends Equatable {
       paymentMethod: paymentMethod ?? this.paymentMethod,
       selectedCustomer: selectedCustomer ?? this.selectedCustomer,
       note: note ?? this.note,
+      amountTendered: amountTendered ?? this.amountTendered,
+      cardAmount: cardAmount ?? this.cardAmount,
       completing: completing ?? this.completing,
     );
   }
@@ -70,6 +84,8 @@ class CartState extends Equatable {
         paymentMethod,
         selectedCustomer,
         note,
+        amountTendered,
+        cardAmount,
         completing,
       ];
 }

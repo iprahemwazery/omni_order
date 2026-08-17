@@ -1,3 +1,6 @@
+import 'dart:convert';
+
+import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:omni_order/core/utils/password_utils.dart';
 import 'package:omni_order/domain/models/admin.dart';
@@ -348,4 +351,61 @@ void main() {
       expect(cubit.state.admin?.role, UserRole.superAdmin);
     });
   });
+
+  group('PasswordUtils - PBKDF2', () {
+    test('hash ينتج صيغة pbkdf2_sha256 مقبولة ويعمل معها verify', () {
+      final stored = PasswordUtils.hash('secret');
+      final parts = stored.split(r'$');
+      expect(parts.length, 4);
+      expect(parts[0], 'pbkdf2_sha256');
+      expect(int.parse(parts[1]), PasswordUtils.iterations);
+
+      expect(PasswordUtils.verify('secret', stored), isTrue);
+      expect(PasswordUtils.verify('wrong', stored), isFalse);
+      expect(PasswordUtils.needsRehash(stored), isFalse);
+    });
+
+    test('كل عملية hash تنتج ملحًا مختلفًا', () {
+      final a = PasswordUtils.hash('secret');
+      final b = PasswordUtils.hash('secret');
+      expect(a, isNot(b));
+    });
+
+    test('verify يدعم الصيغة القديمة salt$sha256', () {
+      const salt = 'bGVnYWN5LXNhbHQ=';
+      final legacyStored = '$salt\$${_legacySha256(salt, 'oldpass')}';
+      expect(PasswordUtils.verify('oldpass', legacyStored), isTrue);
+      expect(PasswordUtils.verify('wrong', legacyStored), isFalse);
+      expect(PasswordUtils.needsRehash(legacyStored), isTrue);
+    });
+
+    test('الدخول بمعرّف قديم يُرحّل كلمة السر إلى PBKDF2', () async {
+      final repository = FakeStoreRepository();
+      const legacyPassword = 'oldpass';
+      // محاكاة الصيغة القديمة: salt$sha256(salt:password)
+      final salt = 'bGVnYWN5LXNhbHQ=';
+      final legacyHash = _legacySha256(salt, legacyPassword);
+      await repository.addAdmin(Admin(
+        username: 'legacyuser',
+        passwordHash: '$salt\$$legacyHash',
+        role: UserRole.superAdmin,
+      ));
+
+      final cubit = AuthCubit(repository);
+      await cubit.login('legacyuser', legacyPassword);
+      expect(cubit.state.status, AuthStatus.authenticated);
+
+      final admins = await repository.getAdmins();
+      final stored = admins.first.passwordHash;
+      expect(PasswordUtils.needsRehash(stored), isFalse,
+          reason: 'يجب أن تُرحَّل كلمة السر إلى PBKDF2');
+      expect(PasswordUtils.verify(legacyPassword, stored), isTrue);
+    });
+  });
+}
+
+/// محاكاة الصيغة القديمة SHA-256 (salt:password) المستخدمة قبل PBKDF2.
+String _legacySha256(String salt, String password) {
+  final bytes = utf8.encode('$salt:$password');
+  return sha256.convert(bytes).toString();
 }

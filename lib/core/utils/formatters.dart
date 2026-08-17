@@ -21,6 +21,15 @@ abstract final class AppFormatters {
     return unit.isEmpty ? digits : '$digits $unit';
   }
 
+  /// تنسيق نسبة مئوية (تُقرب لأقرب رقمين) مثل 14%.
+  static String percent(num value) {
+    final rounded = (value * 100).roundToDouble() / 100;
+    final digits = rounded == rounded.roundToDouble()
+        ? _intFormat.format(rounded.toInt())
+        : _decFormat.format(rounded);
+    return '$digits%';
+  }
+
   static String date(DateTime value) => DateFormat('yyyy/MM/dd').format(value.toLocal());
 
   static String time(DateTime value) => DateFormat('hh:mm a').format(value.toLocal());

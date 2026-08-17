@@ -72,7 +72,7 @@ class CustomersScreen extends StatelessWidget {
   Future<void> _addCustomer(BuildContext context) async {
     final result = await showAddCustomerDialog(context);
     if (result == null || !context.mounted) return;
-    final error = await context
+    final (_, error) = await context
         .read<CustomersCubit>()
         .addCustomer(result.$1, phone: result.$2);
     if (error != null && context.mounted) {

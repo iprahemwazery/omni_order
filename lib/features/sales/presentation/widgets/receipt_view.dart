@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../../../core/constants/payment_methods.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/utils/formatters.dart';
 import '../../../../domain/models/sale.dart';
@@ -177,6 +178,13 @@ class ReceiptView extends StatelessWidget {
             highlight: AppColors.error,
           ),
         ],
+        if (sale.taxAmount > 0) ...[
+          const SizedBox(height: 6),
+          _TotalLine(
+            label: 'قيمة الضريبة (${AppFormatters.percent(sale.taxRate)})',
+            value: AppFormatters.money(sale.taxAmount, settings.currency),
+          ),
+        ],
         const SizedBox(height: 10),
         const DashedDivider(),
         const SizedBox(height: 10),
@@ -202,6 +210,44 @@ class ReceiptView extends StatelessWidget {
             ),
           ],
         ),
+        if (sale.taxAmount > 0) ...[
+          const SizedBox(height: 2),
+          const Text(
+            'شامل ضريبة القيمة المضافة',
+            style: TextStyle(fontSize: 11, color: AppColors.textSecondary),
+          ),
+        ],
+        if (sale.paymentMethod == PaymentMethod.mixed) ...[
+          const SizedBox(height: 8),
+          _TotalLine(
+            label: 'نقدًا',
+            value: AppFormatters.money(
+              sale.total - sale.cardAmount,
+              settings.currency,
+            ),
+          ),
+          const SizedBox(height: 4),
+          _TotalLine(
+            label: 'بالشبكة',
+            value: AppFormatters.money(sale.cardAmount, settings.currency),
+            highlight: AppColors.primary,
+          ),
+        ] else if (sale.amountTendered > sale.total) ...[
+          const SizedBox(height: 8),
+          _TotalLine(
+            label: 'المدفوع',
+            value: AppFormatters.money(
+              sale.amountTendered,
+              settings.currency,
+            ),
+          ),
+          const SizedBox(height: 4),
+          _TotalLine(
+            label: 'الباقي للعميل',
+            value: AppFormatters.money(sale.changeDue, settings.currency),
+            highlight: AppColors.success,
+          ),
+        ],
         const SizedBox(height: 10),
         Container(
           width: double.infinity,
@@ -232,7 +278,7 @@ class ReceiptView extends StatelessWidget {
             ),
           ),
         ],
-        if (sale.paymentMethod == 'آجل') ...[
+        if (sale.paymentMethod == PaymentMethod.deferred) ...[
           const SizedBox(height: 8),
           Text(
             customerName == null

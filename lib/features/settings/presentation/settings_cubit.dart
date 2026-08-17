@@ -1,5 +1,6 @@
 import 'package:flutter_bloc/flutter_bloc.dart';
 
+import '../../../../core/utils/error_utils.dart';
 import '../../../../domain/models/store_settings.dart';
 import '../../../../domain/repositories/store_repository.dart';
 import 'settings_state.dart';
@@ -20,7 +21,7 @@ class SettingsCubit extends Cubit<SettingsState> {
       final settings = await _repository.getSettings();
       emit(SettingsState(settings: settings));
     } catch (e) {
-      emit(state.copyWith(error: 'تعذر تحميل الإعدادات: $e'));
+      emit(state.copyWith(error: safeErrorMessage('تعذر تحميل الإعدادات', e)));
     }
   }
 

@@ -21,7 +21,7 @@ Future<void> seedSuperAdmin(FakeStoreRepository repo) async {
 /// يسجل الدخول عبر شاشة الدخول (بعد أن تظهر).
 Future<void> login(WidgetTester tester) async {
   await tester.enterText(
-    find.byKey(const Key('login_email')),
+    find.byKey(const Key('login_username')),
     testUsername,
   );
   await tester.enterText(

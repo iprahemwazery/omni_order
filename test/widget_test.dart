@@ -64,7 +64,7 @@ void main() {
     await tester.pumpWidget(pumpAppWidget(repository));
     await tester.pumpAndSettle();
 
-    await tester.enterText(find.byKey(const Key('login_email')), testUsername);
+    await tester.enterText(find.byKey(const Key('login_username')), testUsername);
     await tester.enterText(find.byKey(const Key('login_password')), 'wrong');
     await tester.tap(find.byKey(const Key('login_submit')));
     await tester.pumpAndSettle();
@@ -86,7 +86,7 @@ void main() {
     await tester.pumpWidget(pumpAppWidget(repository));
     await tester.pumpAndSettle();
 
-    await tester.enterText(find.byKey(const Key('login_email')), 'cashier1');
+    await tester.enterText(find.byKey(const Key('login_username')), 'cashier1');
     await tester.enterText(
       find.byKey(const Key('login_password')),
       testPassword,
@@ -213,7 +213,7 @@ void main() {
     tester,
   ) async {
     final repository = FakeStoreRepository();
-    final supplier = await repository.addSupplier(
+    await repository.addSupplier(
       Supplier(name: 'مورد الأرز', phone: '01000000000'),
     );
     final productsCubit = ProductsCubit(repository)..init();

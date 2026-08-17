@@ -1,5 +1,6 @@
 import 'package:flutter_bloc/flutter_bloc.dart';
 
+import '../../../../core/utils/error_utils.dart';
 import '../../../../domain/models/supplier.dart';
 import '../../../../domain/models/supplier_payment.dart';
 import '../../../../domain/repositories/store_repository.dart';
@@ -21,7 +22,7 @@ class SuppliersCubit extends Cubit<SuppliersState> {
       final suppliers = await _repository.getSuppliers();
       emit(SuppliersState(suppliers: suppliers));
     } catch (e) {
-      emit(state.copyWith(error: 'تعذر تحميل الموردين: $e'));
+      emit(state.copyWith(error: safeErrorMessage('تعذر تحميل الموردين', e)));
     }
   }
 
@@ -93,7 +94,7 @@ class SuppliersCubit extends Cubit<SuppliersState> {
       await refresh();
       return null;
     } catch (e) {
-      return 'تعذر تسجيل السداد: $e';
+      return safeErrorMessage('تعذر تسجيل السداد', e);
     }
   }
 

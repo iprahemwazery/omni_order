@@ -1,7 +1,9 @@
 import 'package:flutter_bloc/flutter_bloc.dart';
 
+import '../../../../core/constants/payment_methods.dart';
 import '../../../../domain/models/cart_line.dart';
 import '../../../../domain/models/customer.dart';
+import '../../../../domain/models/held_cart.dart';
 import '../../../../domain/models/product.dart';
 import '../../../../domain/models/sale.dart';
 import '../../../../domain/models/sale_item.dart';
@@ -78,7 +80,7 @@ class CartCubit extends Cubit<CartState> {
   }
 
   void setPaymentMethod(String method) {
-    if (kPaymentMethods.contains(method)) {
+    if (PaymentMethod.all.contains(method)) {
       emit(state.copyWith(paymentMethod: method));
     }
   }
@@ -91,13 +93,120 @@ class CartCubit extends Cubit<CartState> {
     emit(state.copyWith(note: note));
   }
 
+  /// المبلغ الذي دفعه العميل (لحساب الباقي).
+  void setAmountTendered(double amount) {
+    emit(state.copyWith(amountTendered: amount < 0 ? 0 : amount));
+  }
+
+  /// الجزء المدفوع بالشبكة في حالة الدفع المختلط.
+  void setCardAmount(double amount) {
+    emit(state.copyWith(cardAmount: amount < 0 ? 0 : amount));
+  }
+
   void clearCart() => emit(const CartState());
+
+  /// يعلّق السلة الحالية: يحفظها محليًا (SQLite) ثم يُفرّغ السلة لاستقبال
+  /// عميل جديد. يعيد معرّف الفاتورة المعلقة أو null إذا كانت السلة فارغة.
+  Future<int?> holdCart({String cashierName = ''}) async {
+    final current = state;
+    if (current.isEmpty) return null;
+    final items = [
+      for (final line in current.lines)
+        HeldCartItem(
+          heldCartId: 0,
+          productId: line.product.id,
+          name: line.product.name,
+          price: line.product.price,
+          costPrice: line.product.costPrice,
+          quantity: line.quantity,
+          subtotal: line.subtotal,
+        ),
+    ];
+    final id = await _repository.holdCart(
+      cart: HeldCart(
+        savedAt: DateTime.now(),
+        discount: current.discount,
+        paymentMethod: current.paymentMethod,
+        customerId: current.selectedCustomer?.id,
+        note: current.note.trim(),
+        cashierName: cashierName,
+        itemsCount: items.length,
+        total: current.total,
+      ),
+      items: items,
+    );
+    emit(const CartState());
+    return id;
+  }
+
+  /// يسترجع فاتورة معلقة: يعيد بناء السلة من لقطة البنود مع التحقق من
+  /// المخزون الحالي، ويحذفها من قائمة المعلقة.
+  ///
+  /// يعيد null عند النجاح، أو رسالة تحذير/خطأ. الأصناف المنتهية أو
+  /// النافدة تُتجاهل ويُشار إليها في الرسالة.
+  Future<String?> restoreHeldCart(HeldCart cart) async {
+    if (cart.id == null) return 'تعذر استرجاع الفاتورة المعلقة.';
+    final items = await _repository.getHeldCartItems(cart.id!);
+
+    final lines = <CartLine>[];
+    final skipped = <String>[];
+    for (final item in items) {
+      Product? product;
+      for (final p in _productsCubit.state.products) {
+        if (p.id == item.productId) {
+          product = p;
+          break;
+        }
+      }
+      if (product == null || product.stock <= 0) {
+        skipped.add(item.name);
+        continue;
+      }
+      final quantity = item.quantity.clamp(0.0, product.stock);
+      lines.add(CartLine(product: product, quantity: quantity));
+    }
+    if (lines.isEmpty) {
+      return 'لا يمكن الاسترجاع: '
+          '${skipped.isEmpty ? 'كل الأصناف غير متوفرة أو نَفدت.' : skipped.join('، ')}';
+    }
+
+    Customer? customer;
+    if (cart.customerId != null) {
+      customer = _customersCubit.state.customerById(cart.customerId!);
+    }
+
+    emit(
+      CartState(
+        lines: lines,
+        discount: cart.discount,
+        paymentMethod: PaymentMethod.all.contains(cart.paymentMethod)
+            ? cart.paymentMethod
+            : PaymentMethod.cash,
+        selectedCustomer: customer,
+        note: cart.note,
+      ),
+    );
+
+    await _repository.deleteHeldCart(cart.id!);
+    if (skipped.isEmpty) return null;
+    return 'تم الاسترجاع، لكن هذه الأصناف نَفدت ولم تُضف: ${skipped.join('، ')}';
+  }
 
   /// يُنهي البيع: يحفظ الفاتورة، يخصم المخزون (داخل معاملة)، يحدّث مديونية
   /// العميل، ويرجّع الفاتورة المنشأة. [cashierName] هو اسم المستخدم المسجل.
-  Future<Sale?> completeSale({String cashierName = ''}) async {
+  /// [taxRate] نسبة الضريبة % (تُضاف داخل السعر — الأسعار شاملة الضريبة).
+  Future<Sale?> completeSale({
+    String cashierName = '',
+    double taxRate = 0,
+  }) async {
     final current = state;
     if (current.isEmpty) return null;
+
+    // الضريبة مضمنة في السعر: قيمة الضريبة تُستخرج من الصافي.
+    final net = current.total;
+    final taxAmount = taxRate <= 0
+        ? 0.0
+        : net * taxRate / (100 + taxRate);
 
     emit(current.copyWith(completing: true));
     try {
@@ -118,30 +227,31 @@ class CartCubit extends Cubit<CartState> {
         total: current.total,
         itemsCount: items.length,
         discount: current.discount,
+        taxRate: taxRate,
+        taxAmount: taxAmount,
         paymentMethod: current.paymentMethod,
         customerId: current.selectedCustomer?.id,
         cashierName: cashierName,
         note: current.note.trim(),
+        amountTendered: current.amountTendered,
+        cardAmount: current.cardAmount,
       );
 
       final saleId = await _repository.createSale(sale: sale, items: items);
-
-      // تحديث مديونية العميل عند البيع "آجل".
-      if (current.paymentMethod == 'آجل' && current.selectedCustomer != null) {
-        final customer = current.selectedCustomer!;
-        await _repository.updateCustomer(
-          customer.copyWith(balance: customer.balance + current.total),
-        );
-      }
 
       final created = Sale(
         id: saleId,
         total: sale.total,
         itemsCount: sale.itemsCount,
         discount: sale.discount,
+        taxRate: sale.taxRate,
+        taxAmount: sale.taxAmount,
         paymentMethod: sale.paymentMethod,
         customerId: sale.customerId,
         cashierName: sale.cashierName,
+        note: sale.note,
+        amountTendered: sale.amountTendered,
+        cardAmount: sale.cardAmount,
         createdAt: sale.createdAt,
       );
 

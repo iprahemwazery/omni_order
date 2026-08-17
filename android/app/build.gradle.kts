@@ -7,7 +7,9 @@ plugins {
 
 android {
     namespace = "apptest.omni_order"
-    compileSdk = flutter.compileSdkVersion
+    // flutter_secure_storage يتطلب SDK 37+ — أرفع compileSdk ليتجاوز
+    // القيمة الافتراضية لـ Flutter (متوافقة مع الإصدارات الأقدم).
+    compileSdk = 37
     ndkVersion = flutter.ndkVersion
 
     compileOptions {

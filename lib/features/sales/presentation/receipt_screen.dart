@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../core/theme/app_colors.dart';
+import '../../../core/utils/error_utils.dart';
 import '../../../domain/models/sale.dart';
 import '../../../domain/models/sale_item.dart';
 import '../../../domain/models/store_settings.dart';
@@ -15,10 +16,26 @@ import 'widgets/receipt_pdf_exporter.dart';
 import 'widgets/receipt_view.dart';
 
 /// شاشة عرض الفاتورة بعد إتمام البيع أو من سجل المبيعات.
-class ReceiptScreen extends StatelessWidget {
+class ReceiptScreen extends StatefulWidget {
   const ReceiptScreen({super.key, required this.sale});
 
   final Sale sale;
+
+  @override
+  State<ReceiptScreen> createState() => _ReceiptScreenState();
+}
+
+class _ReceiptScreenState extends State<ReceiptScreen> {
+  /// يُنفَّذ استعلام بنود الفاتورة مرة واحدة فقط بدل إعادة تنفيذه
+  /// مع كل إعادة بناء للشاشة.
+  late final Future<List<SaleItem>> _itemsFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _itemsFuture =
+        context.read<SalesCubit>().saleItemsOf(widget.sale.id ?? 0);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -28,8 +45,8 @@ class ReceiptScreen extends StatelessWidget {
         title: const Text('الفاتورة'),
         backgroundColor: Colors.transparent,
       ),
-      body: FutureBuilder(
-        future: context.read<SalesCubit>().saleItemsOf(sale.id ?? 0),
+      body: FutureBuilder<List<SaleItem>>(
+        future: _itemsFuture,
         builder: (context, snapshot) {
           if (snapshot.connectionState != ConnectionState.done) {
             return const Center(child: CircularProgressIndicator());
@@ -39,7 +56,7 @@ class ReceiptScreen extends StatelessWidget {
             builder: (context, customers) =>
                 BlocBuilder<SettingsCubit, SettingsState>(
               builder: (context, settings) {
-                final customerName = customers.customerById(sale.customerId)?.name;
+                final customerName = customers.customerById(widget.sale.customerId)?.name;
                 return Center(
                   child: SingleChildScrollView(
                     padding: const EdgeInsets.all(16),
@@ -47,7 +64,7 @@ class ReceiptScreen extends StatelessWidget {
                       children: [
                         const SizedBox(height: 8),
                         ReceiptView(
-                          sale: sale,
+                          sale: widget.sale,
                           items: items,
                           settings: settings.settings,
                           customerName: customerName,
@@ -56,7 +73,7 @@ class ReceiptScreen extends StatelessWidget {
                         const _SuccessNote(),
                         const SizedBox(height: 16),
                         _SavePdfButton(
-                          sale: sale,
+                          sale: widget.sale,
                           items: items,
                           settings: settings.settings,
                           customerName: customerName,
@@ -184,7 +201,8 @@ class _SavePdfButtonState extends State<_SavePdfButton> {
       if (!mounted) return;
       ScaffoldMessenger.of(context)
         ..hideCurrentSnackBar()
-        ..showSnackBar(SnackBar(content: Text('تعذر حفظ الفاتورة: $e')));
+        ..showSnackBar(SnackBar(
+            content: Text(safeErrorMessage('تعذر حفظ الفاتورة', e))));
     } finally {
       if (mounted) setState(() => _saving = false);
     }

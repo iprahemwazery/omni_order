@@ -6,7 +6,13 @@ import '../../../../domain/models/admin.dart';
 import '../../../../domain/repositories/store_repository.dart';
 import 'auth_state.dart';
 
-/// يدير تسجيل الدخول والجلسة الحالية وإدارة المستخدمين والصلاحيات.
+/// يدير بوابة الترخيص وتسجيل الدخول المحلي (أدمن/كاشير) وإدارة المستخدمين.
+///
+/// التدفق بعد الاستبدال الكامل:
+///   1. عند فتح التطبيق يتحقق من التفعيل المحلي ([init]).
+///   2. لا يوجد تفعيل -> شاشة إدخال مفتاح الترخيص ([AuthStatus.activation])
+///      (التفعيل نفسه يديره LicenseCubit ثم يُستدعى [onLicenseGranted]).
+///   3. بعد ضمان الترخيص -> إعداد أول مرة أو تسجيل الدخول المحلي.
 class AuthCubit extends Cubit<AuthState> {
   AuthCubit(this._repository, {AuthService? authService})
       : _authService = authService ?? AuthService(),
@@ -15,103 +21,113 @@ class AuthCubit extends Cubit<AuthState> {
   final StoreRepository _repository;
   final AuthService _authService;
 
-  /// يتحقق عند فتح التطبيق: إن كان Supabase مفعّلًا -> يستعيد الجلسة
-  /// المحفوظة (التوكن) ويدخل مباشرة، أو يعرض شاشة تسجيل الدخول.
-  /// وإلا فحسب وجود مستخدمين محليين (إعداد أول مرة أو دخول محلي).
+  /// يتحقق عند فتح التطبيق: بوابة الترخيص أولاً، ثم حسب وجود المستخدمين
+  /// المحليين (إعداد أول مرة أو شاشة تسجيل الدخول).
   Future<void> init() async {
     try {
+      // 1) بوابة الترخيص: هل يوجد تفعيل محلي صالح على هذا الجهاز؟
       if (_authService.isReady) {
-        await _restoreSession();
-        return;
-      }
-      final admins = await _repository.getAdmins();
-      if (admins.isEmpty) {
-        emit(const AuthState(status: AuthStatus.setup));
-      } else {
-        emit(const AuthState(status: AuthStatus.unauthenticated));
-      }
-    } catch (e) {
-      emit(const AuthState(status: AuthStatus.unauthenticated, error: 'تعذر فتح قاعدة البيانات'));
-    }
-  }
-
-  /// يستعيد الجلسة المحفوظة من Supabase: لو في جلسة (التوكن محفوظ محليًا)
-  /// يُعاد فتح التطبيق مباشرة على الشاشة الرئيسية بنفس دور المستخدم.
-  Future<void> _restoreSession() async {
-    try {
-      final session = _authService.currentSession;
-      final email = session?.user.email;
-      if (email == null || email.isEmpty) {
-        emit(const AuthState(status: AuthStatus.unauthenticated));
-        return;
+        final licenseError = await _authService.checkOfflineActivation();
+        if (licenseError != null) {
+          emit(const AuthState(status: AuthStatus.activation));
+          return;
+        }
       }
 
-      // نعيد استخدام نفس الأدمن المحلي بدوره المحفوظ (أدمن/كاشير).
-      final existing = await _repository.getAdminByUsername(email);
-      if (existing != null) {
-        emit(AuthState(status: AuthStatus.authenticated, admin: existing));
-        return;
-      }
-
-      // لو قاعدة البيانات المحلية اتُهيأت بعد آخر دخول: ننشئ الأدمن مرتبطًا
-      // بنفس البريد حتى يفتح التطبيق مباشرة.
-      final admin = await _adminForEmail(email, role: UserRole.superAdmin);
-      emit(AuthState(status: AuthStatus.authenticated, admin: admin));
+      // 2) الدخول المحلي حسب وجود أدمن.
+      await _resolveLocalEntry();
     } catch (_) {
       emit(const AuthState(status: AuthStatus.unauthenticated));
     }
   }
 
-  // ---- تسجيل الدخول ----
-
-  /// تسجيل الدخول: عبر Supabase (بريد + كلمة سر + جهاز واحد فقط) إن كان مفعّلًا،
-  /// ثم يطلب اختيار الدور (أدمن/كاشير). وإلا يعود لتسجيل الدخول المحلي القديم.
-  Future<String?> login(String email, String password) async {
-    final trimmed = email.trim();
-    if (trimmed.isEmpty) return 'اكتب البريد الإلكتروني.';
-    if (password.isEmpty) return 'اكتب كلمة السر.';
-
-    if (_authService.isReady) {
-      final licenseError = await _authService.loginSingleDevice(
-        email: trimmed,
-        password: password,
-      );
-      if (licenseError != null) return licenseError;
-
-      emit(AuthState(status: AuthStatus.chooseRole, pendingEmail: trimmed));
+  /// يُستدعى بعد نجاح تفعيل مفتاح الترخيص (من LicenseCubit) لاستكمال
+  /// الدخول المحلي (إعداد أول مرة أو شاشة تسجيل الدخول).
+  Future<String?> onLicenseGranted() async {
+    try {
+      if (_authService.isReady) {
+        final licenseError = await _authService.checkOfflineActivation();
+        if (licenseError != null) {
+          emit(
+            const AuthState(status: AuthStatus.activation),
+          );
+          return licenseError;
+        }
+      }
+      await _resolveLocalEntry();
       return null;
+    } catch (_) {
+      emit(const AuthState(status: AuthStatus.activation));
+      return 'تعذر التحقق من الترخيص. حاول مرة أخرى.';
     }
+  }
+
+  /// تحديد الدخول المحلي: لا يوجد أدمن -> إعداد أول مرة، وإلا تسجيل الدخول.
+  Future<void> _resolveLocalEntry() async {
+    final admins = await _repository.getAdmins();
+    if (admins.isEmpty) {
+      emit(const AuthState(status: AuthStatus.setup));
+    } else {
+      emit(const AuthState(status: AuthStatus.unauthenticated));
+    }
+  }
+
+  // ---- تسجيل الدخول المحلي (بعد ضمان الترخيص) ----
+
+  /// تسجيل الدخول باسم المستخدم وكلمة السر المحلية (أدمن/كاشير).
+  Future<String?> login(String username, String password) async {
+    final trimmed = username.trim();
+    if (trimmed.isEmpty) return 'اكتب اسم المستخدم.';
+    if (password.isEmpty) return 'اكتب كلمة السر.';
 
     final admin = await _repository.getAdminByUsername(trimmed);
     if (admin == null || !PasswordUtils.verify(password, admin.passwordHash)) {
       return 'اسم المستخدم أو كلمة السر غير صحيحة.';
     }
-    emit(AuthState(status: AuthStatus.authenticated, admin: admin));
+
+    // ترحيل كلمات السر المخزّنة بالصيغة القديمة (SHA-256) إلى PBKDF2.
+    var loggedIn = admin;
+    if (PasswordUtils.needsRehash(admin.passwordHash)) {
+      loggedIn = admin.copyWith(passwordHash: PasswordUtils.hash(password));
+      await _repository.updateAdmin(loggedIn);
+    }
+    emit(AuthState(status: AuthStatus.authenticated, admin: loggedIn));
     return null;
   }
 
-  /// هل لا يوجد أي أدمن محلي بعد؟ (أول تشغيل — سيُطلب إنشاء الأدمن).
-  Future<bool> needsAdminCreation() async {
-    final admins = await _repository.getAdmins();
-    return admins.isEmpty;
-  }
-
   /// هل لا يوجد أي حساب بصلاحيات أدمن حاليًا؟ (كل الحسابات كاشير فقط)
-  /// تُستخدم لمعرفة ما إذا كان التبديل إلى أدمن يحتاج إنشاء حساب جديد.
+  /// تُستخدم عند التبديل إلى أدمن لمعرفة ما إذا كان يلزم إنشاء حساب جديد.
   Future<bool> needsAdminAccount() async {
     final admins = await _repository.getAdmins();
     return !admins.any((a) => a.role != UserRole.cashier);
   }
 
-  /// الدخول كأدمن: اسم مستخدم + كلمة سر. لو مفيش أدمن خالص يتم الإنشاء
-  /// (زي الفكرة القديمة)، وإلا يتم التحقق من البيانات.
-  Future<String?> loginAsAdmin({
+  // ---- تبديل الدور من داخل التطبيق ----
+
+  /// تحويل من أدمن/سوبر أدمن إلى كاشير مباشرة (بدون كلمة سر).
+  Future<String?> switchToCashier() async {
+    final current = state.admin;
+    if (current == null) return 'لا توجد جلسة نشطة. أعد تسجيل الدخول.';
+    if (current.role == UserRole.cashier) return null;
+
+    final admin = await _adminByUsername(
+      current.username,
+      role: UserRole.cashier,
+    );
+    emit(AuthState(status: AuthStatus.authenticated, admin: admin));
+    return null;
+  }
+
+  /// تحويل من كاشير إلى أدمن: يلزم اسم المستخدم وكلمة السر.
+  Future<String?> switchToAdmin({
     required String username,
     required String password,
     String confirmPassword = '',
   }) async {
-    final email = state.pendingEmail;
-    if (email == null) return 'جلسة منتهية. أعد تسجيل الدخول.';
+    final current = state.admin;
+    if (current == null) return 'لا توجد جلسة نشطة. أعد تسجيل الدخول.';
+    if (current.role != UserRole.cashier) return null;
+
     return _authenticateAdmin(
       username: username,
       password: password,
@@ -172,68 +188,29 @@ class AuthCubit extends Cubit<AuthState> {
     return null;
   }
 
-  /// الدخول ككاشير مباشرة (بدون بيانات إضافية) — كاشير مرتبط بالإيميل.
-  Future<String?> loginAsCashier() async {
-    final email = state.pendingEmail;
-    if (email == null) return 'جلسة منتهية. أعد تسجيل الدخول.';
-
-    final admin = await _adminForEmail(email, role: UserRole.cashier);
-    emit(AuthState(status: AuthStatus.authenticated, admin: admin));
-    return null;
-  }
-
-  // ---- تبديل الدور من داخل التطبيق ----
-
-  /// تحويل من أدمن/سوبر أدمن إلى كاشير مباشرة (بدون كلمة سر).
-  Future<String?> switchToCashier() async {
-    final current = state.admin;
-    if (current == null) return 'لا توجد جلسة نشطة. أعد تسجيل الدخول.';
-    if (current.role == UserRole.cashier) return null;
-
-    final admin = await _adminForEmail(current.username, role: UserRole.cashier);
-    emit(AuthState(status: AuthStatus.authenticated, admin: admin));
-    return null;
-  }
-
-  /// تحويل من كاشير إلى أدمن: يلزم اسم المستخدم وكلمة السر.
-  Future<String?> switchToAdmin({
-    required String username,
-    required String password,
-    String confirmPassword = '',
-  }) async {
-    final current = state.admin;
-    if (current == null) return 'لا توجد جلسة نشطة. أعد تسجيل الدخول.';
-    if (current.role != UserRole.cashier) return null;
-
-    return _authenticateAdmin(
-      username: username,
-      password: password,
-      confirmPassword: confirmPassword,
-    );
-  }
-
-  /// يعيد الأدمن المحلي المقابل لهذا البريد بالدور المختار، أو ينشئه
-  /// تلقائيًا عند أول تسجيل دخول عبر Supabase.
-  Future<Admin> _adminForEmail(String email, {required UserRole role}) async {
-    final existing = await _repository.getAdminByUsername(email);
+  /// يعيد الأدمن المحلي المقابل لهذا الاسم بالدور المختار، أو ينشئه
+  /// تلقائيًا عند أول تحويل لدور لم يُسجَّل من قبل.
+  Future<Admin> _adminByUsername(String username,
+      {required UserRole role}) async {
+    final existing = await _repository.getAdminByUsername(username);
     if (existing != null) {
       final updated = existing.copyWith(role: role);
       await _repository.updateAdmin(updated);
       return updated;
     }
 
-    // كلمة سر عشوائية: الدخول أصبح عبر Supabase وليس عبر كلمة السر المحلية.
+    // كلمة سر عشوائية: الدخول يتم من شاشة الدخول بكلمة السر المحلية.
     final randomHash = PasswordUtils.hash(
-      '$email-${DateTime.now().microsecondsSinceEpoch}',
+      '$username-${DateTime.now().microsecondsSinceEpoch}',
     );
     final id = await _repository.addAdmin(Admin(
-      username: email,
+      username: username,
       passwordHash: randomHash,
       role: role,
     ));
     return Admin(
       id: id,
-      username: email,
+      username: username,
       passwordHash: randomHash,
       role: role,
     );
