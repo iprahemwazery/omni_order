@@ -7,6 +7,7 @@ import '../../../core/utils/formatters.dart';
 import '../../../domain/models/shift.dart';
 import '../../../domain/repositories/store_repository.dart';
 import '../../../shared/widgets/empty_state.dart';
+import '../../../shared/widgets/screen_header.dart';
 import '../../auth/presentation/auth_cubit.dart';
 import '../../settings/presentation/settings_cubit.dart';
 import 'shift_cubit.dart';
@@ -25,7 +26,8 @@ class ShiftScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return BlocProvider(
       create: (context) =>
-          ShiftCubit(context.read<StoreRepository>())..init(_cashierName(context)),
+          ShiftCubit(context.read<StoreRepository>())
+            ..init(_cashierName(context)),
       child: const _ShiftScreenBody(),
     );
   }
@@ -36,59 +38,66 @@ class _ShiftScreenBody extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final cashierName =
-        context.read<AuthCubit>().state.admin?.username ?? '';
+    final cashierName = context.read<AuthCubit>().state.admin?.username ?? '';
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('تقرير الوردية (Z-Report)'),
-        actions: [
-          BlocBuilder<ShiftCubit, ShiftState>(
-            builder: (context, state) {
-              if (state.report == null) return const SizedBox.shrink();
-              return IconButton(
-                tooltip: 'طباعة التقرير',
-                onPressed: () => _exportPdf(context, state.report!),
-                icon: const Icon(Icons.print_outlined),
-              );
-            },
+      body: Column(
+        children: [
+          ScreenHeader(
+            title: 'تقرير الوردية (Z-Report)',
+            actions: [
+              BlocBuilder<ShiftCubit, ShiftState>(
+                builder: (context, state) {
+                  if (state.report == null) return const SizedBox.shrink();
+                  return IconButton(
+                    tooltip: 'طباعة التقرير',
+                    onPressed: () => _exportPdf(context, state.report!),
+                    icon: const Icon(Icons.print_outlined),
+                  );
+                },
+              ),
+            ],
           ),
-        ],
-      ),
-      body: SafeArea(
-        child: BlocBuilder<ShiftCubit, ShiftState>(
-          builder: (context, state) {
-            if (state.loading) {
-              return const Center(child: CircularProgressIndicator());
-            }
-            if (state.error != null) {
-              return Center(
-                child: Text(
-                  state.error!,
-                  style: const TextStyle(color: AppColors.error),
-                ),
-              );
-            }
-            if (state.shift == null || state.report == null) {
-              return _NoShiftView(
-                onStart: () async {
-                  final error = await context
-                      .read<ShiftCubit>()
-                      .startShift(cashierName);
-                  if (error != null && context.mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text(error)),
+          const Divider(height: 1),
+          Expanded(
+            child: SafeArea(
+              top: false,
+              child: BlocBuilder<ShiftCubit, ShiftState>(
+                builder: (context, state) {
+                  if (state.loading) {
+                    return const Center(child: CircularProgressIndicator());
+                  }
+                  if (state.error != null) {
+                    return Center(
+                      child: Text(
+                        state.error!,
+                        style: const TextStyle(color: AppColors.error),
+                      ),
                     );
                   }
+                  if (state.shift == null || state.report == null) {
+                    return _NoShiftView(
+                      onStart: () async {
+                        final error = await context
+                            .read<ShiftCubit>()
+                            .startShift(cashierName);
+                        if (error != null && context.mounted) {
+                          ScaffoldMessenger.of(
+                            context,
+                          ).showSnackBar(SnackBar(content: Text(error)));
+                        }
+                      },
+                    );
+                  }
+                  return _ReportView(
+                    report: state.report!,
+                    onClose: () => _confirmClose(context),
+                  );
                 },
-              );
-            }
-            return _ReportView(
-              report: state.report!,
-              onClose: () => _confirmClose(context),
-            );
-          },
-        ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -98,8 +107,10 @@ class _ShiftScreenBody extends StatelessWidget {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('إغلاق الوردية'),
-        content: const Text('هل أنت متأكد من إغلاق الوردية؟ بعد الإغلاق لن '
-            'تتضمن عمليات البيع الجديدة هذا التقرير.'),
+        content: const Text(
+          'هل أنت متأكد من إغلاق الوردية؟ بعد الإغلاق لن '
+          'تتضمن عمليات البيع الجديدة هذا التقرير.',
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
@@ -134,7 +145,9 @@ class _ShiftScreenBody extends StatelessWidget {
         : report.shift.cashierName;
     final fileName =
         'shift_report_${cashierName}_${DateTime.now().millisecondsSinceEpoch}.pdf';
-    messenger.showSnackBar(const SnackBar(content: Text('جارٍ إنشاء التقرير...')));
+    messenger.showSnackBar(
+      const SnackBar(content: Text('جارٍ إنشاء التقرير...')),
+    );
     try {
       final bytes = await ShiftPdfExporter.buildReport(
         report: report,
@@ -175,7 +188,8 @@ class _NoShiftView extends StatelessWidget {
           const EmptyState(
             icon: Icons.event_note_outlined,
             title: 'لا توجد وردية',
-            subtitle: 'تبدأ الوردية تلقائيًا مع أول عملية بيع، '
+            subtitle:
+                'تبدأ الوردية تلقائيًا مع أول عملية بيع، '
                 'أو ابدأها الآن يدويًا',
           ),
           const SizedBox(height: 16),
@@ -329,9 +343,24 @@ class _ReportView extends StatelessWidget {
           ),
           child: Column(
             children: [
-              _breakdownRow(context, PaymentMethod.cash, report.cashTotal, currency),
-              _breakdownRow(context, PaymentMethod.card, report.cardTotal, currency),
-              _breakdownRow(context, PaymentMethod.wallet, report.walletTotal, currency),
+              _breakdownRow(
+                context,
+                PaymentMethod.cash,
+                report.cashTotal,
+                currency,
+              ),
+              _breakdownRow(
+                context,
+                PaymentMethod.card,
+                report.cardTotal,
+                currency,
+              ),
+              _breakdownRow(
+                context,
+                PaymentMethod.wallet,
+                report.walletTotal,
+                currency,
+              ),
               _breakdownRow(
                 context,
                 PaymentMethod.bankTransfer,
@@ -411,7 +440,10 @@ class _ReportView extends StatelessWidget {
         children: [
           Text(
             label,
-            style: const TextStyle(color: AppColors.textSecondary, fontSize: 14),
+            style: const TextStyle(
+              color: AppColors.textSecondary,
+              fontSize: 14,
+            ),
           ),
           Text(
             AppFormatters.money(amount, currency),

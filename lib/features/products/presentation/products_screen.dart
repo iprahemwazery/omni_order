@@ -5,7 +5,9 @@ import '../../../core/theme/app_colors.dart';
 import '../../../core/utils/formatters.dart';
 import '../../../domain/models/product.dart';
 import '../../../shared/widgets/empty_state.dart';
+import '../../../shared/widgets/screen_header.dart';
 import '../../categories/presentation/categories_screen.dart';
+import 'bulk_import_screen.dart';
 import 'product_form_screen.dart';
 import 'products_cubit.dart';
 
@@ -18,20 +20,31 @@ class ProductsScreen extends StatelessWidget {
     final state = context.watch<ProductsCubit>().state;
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('المخزون'),
-        actions: [
-          IconButton(
-            onPressed: () => Navigator.of(context).push(
-              MaterialPageRoute(builder: (_) => const CategoriesScreen()),
-            ),
-            tooltip: 'التصنيفات',
-            icon: const Icon(Icons.category_outlined),
-          ),
-          Padding(
-            padding: const EdgeInsets.only(left: 16),
-            child: Center(
-              child: Text(
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: () => _openForm(context),
+        icon: const Icon(Icons.add),
+        label: const Text('إضافة صنف'),
+      ),
+      body: Column(
+        children: [
+          ScreenHeader(
+            title: 'المخزون',
+            actions: [
+              IconButton(
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const CategoriesScreen()),
+                ),
+                tooltip: 'التصنيفات',
+                icon: const Icon(Icons.category_outlined),
+              ),
+              IconButton(
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const BulkImportScreen()),
+                ),
+                tooltip: 'استيراد منيو',
+                icon: const Icon(Icons.upload_file_outlined),
+              ),
+              Text(
                 '${state.products.length} صنف',
                 style: const TextStyle(
                   color: AppColors.textSecondary,
@@ -39,28 +52,27 @@ class ProductsScreen extends StatelessWidget {
                   fontWeight: FontWeight.w600,
                 ),
               ),
+            ],
+          ),
+          const Divider(height: 1),
+          Expanded(
+            child: SafeArea(
+              top: false,
+              child: state.loading
+                  ? const Center(child: CircularProgressIndicator())
+                  : state.products.isEmpty
+                  ? const EmptyState(
+                      icon: Icons.inventory_2_outlined,
+                      title: 'المخزون فارغ',
+                      subtitle: 'اضغط زر "إضافة صنف" لإضافة أول منتج',
+                    )
+                  : _ProductsList(
+                      products: state.products,
+                      onEdit: (product) => _openForm(context, product: product),
+                    ),
             ),
           ),
         ],
-      ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => _openForm(context),
-        icon: const Icon(Icons.add),
-        label: const Text('إضافة صنف'),
-      ),
-      body: SafeArea(
-        child: state.loading
-            ? const Center(child: CircularProgressIndicator())
-            : state.products.isEmpty
-                ? const EmptyState(
-                    icon: Icons.inventory_2_outlined,
-                    title: 'المخزون فارغ',
-                    subtitle: 'اضغط زر "إضافة صنف" لإضافة أول منتج',
-                  )
-                : _ProductsList(
-                    products: state.products,
-                    onEdit: (product) => _openForm(context, product: product),
-                  ),
       ),
     );
   }
@@ -110,9 +122,7 @@ class _ProductTile extends StatelessWidget {
             child: const Text('إلغاء'),
           ),
           FilledButton(
-            style: FilledButton.styleFrom(
-              backgroundColor: AppColors.error,
-            ),
+            style: FilledButton.styleFrom(backgroundColor: AppColors.error),
             onPressed: () => Navigator.of(context).pop(true),
             child: const Text('حذف'),
           ),
@@ -123,9 +133,9 @@ class _ProductTile extends StatelessWidget {
     if (confirmed == true && context.mounted) {
       await context.read<ProductsCubit>().deleteProduct(product);
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('تم حذف "${product.name}"')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('تم حذف "${product.name}"')));
       }
     }
   }
@@ -145,10 +155,13 @@ class _ProductTile extends StatelessWidget {
                 width: 46,
                 height: 46,
                 decoration: BoxDecoration(
-                  color: const Color(0xFFE8F1EF),
+                  color: AppColors.primary.withValues(alpha: 0.12),
                   borderRadius: BorderRadius.circular(14),
                 ),
-                child: const Icon(Icons.inventory_2_outlined, color: AppColors.primary),
+                child: const Icon(
+                  Icons.inventory_2_outlined,
+                  color: AppColors.primaryLight,
+                ),
               ),
               const SizedBox(width: 12),
               Expanded(
@@ -157,8 +170,24 @@ class _ProductTile extends StatelessWidget {
                   children: [
                     Text(
                       product.name,
-                      style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 15,
+                      ),
                     ),
+                    if (product.description.trim().isNotEmpty) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        product.description,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: AppColors.textSecondary,
+                          height: 1.3,
+                        ),
+                      ),
+                    ],
                     const SizedBox(height: 2),
                     Text(
                       AppFormatters.money(product.price),
@@ -175,7 +204,9 @@ class _ProductTile extends StatelessWidget {
                       style: TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.w600,
-                        color: outOfStock ? AppColors.error : AppColors.textSecondary,
+                        color: outOfStock
+                            ? AppColors.error
+                            : AppColors.textSecondary,
                       ),
                     ),
                   ],

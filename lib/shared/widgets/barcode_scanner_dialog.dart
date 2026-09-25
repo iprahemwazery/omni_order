@@ -40,7 +40,9 @@ class _BarcodeScannerDialogState extends State<BarcodeScannerDialog> {
   }
 
   void _onDetect(BarcodeCapture capture) {
-    final code = capture.barcodes.isEmpty ? null : capture.barcodes.first.rawValue;
+    final code = capture.barcodes.isEmpty
+        ? null
+        : capture.barcodes.first.rawValue;
     if (code == null || code.isEmpty) return;
     if (!mounted) return;
     Navigator.of(context).pop(code);
@@ -66,7 +68,10 @@ class _BarcodeScannerDialogState extends State<BarcodeScannerDialog> {
                   const Expanded(
                     child: Text(
                       'مسح الباركود',
-                      style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
+                      style: TextStyle(
+                        fontSize: 17,
+                        fontWeight: FontWeight.w800,
+                      ),
                     ),
                   ),
                   IconButton(
@@ -86,10 +91,7 @@ class _BarcodeScannerDialogState extends State<BarcodeScannerDialog> {
               child: Stack(
                 fit: StackFit.expand,
                 children: [
-                  MobileScanner(
-                    controller: _controller,
-                    onDetect: _onDetect,
-                  ),
+                  MobileScanner(controller: _controller, onDetect: _onDetect),
                   const Center(
                     child: Icon(
                       Icons.center_focus_strong,

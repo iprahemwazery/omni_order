@@ -2,12 +2,12 @@
 class AppConstants {
   AppConstants._();
 
-  static const String appName = 'أومني أوردر';
+  static const String appName = 'Ocean Catch';
 
   static const String dbName = 'omni_order.db';
-  static const int dbVersion = 13;
+  static const int dbVersion = 27;
 
-  static const String defaultStoreName = 'متجري';
+  static const String defaultStoreName = 'مطعمي';
   static const String defaultCurrency = 'ج.م';
 
   static const List<String> productUnits = [
@@ -19,5 +19,10 @@ class AppConstants {
     'زجاجة',
     'حزمة',
     'كرتونة',
+    'طبق',
+    'وجبة',
+    'كوباية',
+    'جرام',
+    'نص كيلو',
   ];
 }

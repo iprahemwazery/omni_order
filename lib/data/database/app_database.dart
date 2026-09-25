@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 import 'package:sqflite/sqflite.dart' show databaseFactorySqflitePlugin;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
@@ -11,6 +12,9 @@ class AppDatabase {
   AppDatabase._();
 
   static final AppDatabase instance = AppDatabase._();
+
+  /// تجاوز مسار مجلد قاعدة البيانات (تُستخدم في الاختبارات فقط).
+  static String? overrideDatabasesPath;
 
   Database? _db;
   String? _path;
@@ -31,7 +35,7 @@ class AppDatabase {
   Future<Database> _open() async {
     final factory = _isDesktop() ? _initFfi() : databaseFactorySqflitePlugin;
 
-    final path = p.join(await factory.getDatabasesPath(), AppConstants.dbName);
+    final path = await _resolveDbPath(factory);
     _path = path;
     return factory.openDatabase(
       path,
@@ -60,6 +64,21 @@ class AppDatabase {
           await db.execute(_shiftsTable);
           await db.execute(_heldCartsTable);
           await db.execute(_heldCartItemsTable);
+          await db.execute(_hallsTable);
+          await db.execute(_restaurantTablesTable);
+          await db.execute(_employeesTable);
+          await db.execute(_ordersTable);
+          await db.execute(_orderItemsTable);
+          await db.execute(_employeeAdvancesTable);
+          await db.execute(_orderStatusHistoryTable);
+          await db.execute(_riderTransactionsTable);
+          await db.execute(_couponsTable);
+          // جداول كانت تُنشأ في الترحيلات فقط — أُضيفت هنا حتى تكتمل
+          // قواعد البيانات الجديدة (القائمة/الحجوزات/الوصفات).
+          await db.execute(_reservationsTable);
+          await db.execute(_queueEntriesTable);
+          await db.execute(_recipesTable);
+          await db.execute(_recipeItemsTable);
         },
         onUpgrade: (db, oldVersion, newVersion) async {
           if (oldVersion < 2) {
@@ -265,6 +284,290 @@ class AppDatabase {
               'TEXT',
             );
           }
+          if (oldVersion < 14) {
+            // === تحويل نظام المحلات إلى نظام مطعم ===
+            // جداول الصالات والترابيزات
+            await db.execute(_hallsTable);
+            await db.execute(_restaurantTablesTable);
+            // جدول الموظفين
+            await db.execute(_employeesTable);
+            // جداول الطلبات وبنودها
+            await db.execute(_ordersTable);
+            await db.execute(_orderItemsTable);
+            // تعديلات جدول المنتجات: إضافة أعمدة المنيو
+            await _ensureColumnExists(
+              db,
+              'products',
+              'is_available',
+              'INTEGER NOT NULL DEFAULT 1',
+            );
+            await _ensureColumnExists(
+              db,
+              'products',
+              'preparation_time',
+              'INTEGER NOT NULL DEFAULT 0',
+            );
+            await _ensureColumnExists(
+              db,
+              'products',
+              'is_raw_material',
+              'INTEGER NOT NULL DEFAULT 0',
+            );
+            // فهارس جديدة
+            await _createIndex(db, 'idx_orders_table', 'orders', 'table_id');
+            await _createIndex(
+              db,
+              'idx_orders_status',
+              'orders',
+              'status',
+            );
+            await _createIndex(
+              db,
+              'idx_orders_created_at',
+              'orders',
+              'created_at',
+            );
+            await _createIndex(
+              db,
+              'idx_order_items_order',
+              'order_items',
+              'order_id',
+            );
+            await _createIndex(
+              db,
+              'idx_restaurant_tables_hall',
+              'restaurant_tables',
+              'hall_id',
+            );
+            await _createIndex(
+              db,
+              'idx_restaurant_tables_status',
+              'restaurant_tables',
+              'status',
+            );
+            await _createIndex(
+              db,
+              'idx_employees_role',
+              'employees',
+              'role',
+            );
+          }
+          if (oldVersion < 15) {
+            // === نظام التوصيل + السلف + المنيو الاحترافي ===
+            // أعمدة جديدة في جدول الطلبات للتوصيل
+            await _ensureColumnExists(
+              db, 'orders', 'order_type', "TEXT NOT NULL DEFAULT 'hall'",
+            );
+            await _ensureColumnExists(
+              db, 'orders', 'delivery_address', "TEXT NOT NULL DEFAULT ''",
+            );
+            await _ensureColumnExists(
+              db, 'orders', 'delivery_phone', "TEXT NOT NULL DEFAULT ''",
+            );
+            await _ensureColumnExists(
+              db, 'orders', 'delivery_notes', "TEXT NOT NULL DEFAULT ''",
+            );
+            await _ensureColumnExists(
+              db, 'orders', 'delivery_person_name', "TEXT NOT NULL DEFAULT ''",
+            );
+            await _ensureColumnExists(
+              db, 'orders', 'delivery_fee', 'REAL NOT NULL DEFAULT 0',
+            );
+            await _ensureColumnExists(
+              db, 'orders', 'hall_id', 'INTEGER',
+            );
+            // سعر النص كيلو في المنتجات
+            await _ensureColumnExists(
+              db, 'products', 'half_price', 'REAL NOT NULL DEFAULT 0',
+            );
+            // جدول سلف الموظفين
+            await db.execute(_employeeAdvancesTable);
+            // فهارس جديدة
+            await _createIndex(
+              db, 'idx_orders_order_type', 'orders', 'order_type',
+            );
+            await _createIndex(
+              db, 'idx_orders_hall_id', 'orders', 'hall_id',
+            );
+            await _createIndex(
+              db, 'idx_employee_advances_employee',
+              'employee_advances', 'employee_id',
+            );
+            await _createIndex(
+              db, 'idx_employee_advances_created_at',
+              'employee_advances', 'created_at',
+            );
+          }
+          if (oldVersion < 16) {
+            await _ensureColumnExists(
+              db, 'orders', 'rider_id', 'INTEGER',
+            );
+            await db.execute(_orderStatusHistoryTable);
+            await _createIndex(
+              db, 'idx_osh_order', 'order_status_history', 'order_id',
+            );
+            await _createIndex(
+              db, 'idx_osh_status', 'order_status_history', 'status',
+            );
+          }
+          if (oldVersion < 17) {
+            await _ensureColumnExists(
+              db, 'sales', 'order_type', "TEXT NOT NULL DEFAULT 'عميل_عادي'",
+            );
+            await _ensureColumnExists(
+              db, 'sales', 'table_name', "TEXT NOT NULL DEFAULT ''",
+            );
+            await _ensureColumnExists(
+              db, 'sales', 'customer_name', "TEXT NOT NULL DEFAULT ''",
+            );
+          }
+          if (oldVersion < 18) {
+            await db.execute(_riderTransactionsTable);
+            await _createIndex(
+              db, 'idx_rider_tx_rider', 'rider_transactions', 'rider_id',
+            );
+            await _createIndex(
+              db, 'idx_rider_tx_created', 'rider_transactions', 'created_at',
+            );
+            await _createIndex(
+              db, 'idx_rider_tx_order', 'rider_transactions', 'order_id',
+            );
+          }
+          if (oldVersion < 19) {
+            await db.execute(_couponsTable);
+            await _createIndex(db, 'idx_coupons_code', 'coupons', 'code');
+          }
+          if (oldVersion < 20) {
+            await _ensureColumnExists(
+              db, 'customers', 'loyalty_points', 'INTEGER NOT NULL DEFAULT 0',
+            );
+            await _ensureColumnExists(
+              db, 'customers', 'address', "TEXT NOT NULL DEFAULT ''",
+            );
+            await _ensureColumnExists(
+              db, 'customers', 'notes', "TEXT NOT NULL DEFAULT ''",
+            );
+          }
+          if (oldVersion < 21) {
+            await _ensureColumnExists(
+              db, 'sales', 'tip', 'REAL NOT NULL DEFAULT 0',
+            );
+          }
+          if (oldVersion < 22) {
+            await db.execute('''
+              CREATE TABLE IF NOT EXISTS reservations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                table_id INTEGER NOT NULL,
+                table_number INTEGER NOT NULL,
+                customer_name TEXT NOT NULL DEFAULT '',
+                customer_phone TEXT NOT NULL DEFAULT '',
+                party_size INTEGER NOT NULL DEFAULT 2,
+                reservation_time TEXT NOT NULL,
+                note TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'confirmed',
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (table_id) REFERENCES tables(id) ON DELETE CASCADE
+              )
+            ''');
+          }
+          if (oldVersion < 23) {
+            await _ensureColumnExists(
+              db, 'products', 'image_path', "TEXT NOT NULL DEFAULT ''",
+            );
+          }
+          if (oldVersion < 24) {
+            await db.execute('''
+              CREATE TABLE IF NOT EXISTS queue_entries (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                customer_name TEXT NOT NULL DEFAULT '',
+                customer_phone TEXT NOT NULL DEFAULT '',
+                party_size INTEGER NOT NULL DEFAULT 2,
+                status TEXT NOT NULL DEFAULT 'waiting',
+                note TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL
+              )
+            ''');
+          }
+          if (oldVersion < 25) {
+            await db.execute('''
+              CREATE TABLE IF NOT EXISTS recipes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                product_id INTEGER NOT NULL,
+                product_name TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
+              )
+            ''');
+            await db.execute('''
+              CREATE TABLE IF NOT EXISTS recipe_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                recipe_id INTEGER NOT NULL,
+                raw_material_id INTEGER NOT NULL,
+                raw_material_name TEXT NOT NULL DEFAULT '',
+                quantity REAL NOT NULL DEFAULT 0,
+                unit TEXT NOT NULL DEFAULT 'كجم',
+                FOREIGN KEY (recipe_id) REFERENCES recipes(id) ON DELETE CASCADE,
+                FOREIGN KEY (raw_material_id) REFERENCES products(id) ON DELETE CASCADE
+              )
+            ''');
+          }
+          if (oldVersion < 26) {
+            // === وحدات الشراء المرنة (شراء بالكرتونة / بيع بالقطعة) ===
+            // وحدة الشراء بالجملة للصنف + عدد الوحدات الأساسية داخل العبوة.
+            await _ensureColumnExists(
+              db, 'products', 'package_unit', "TEXT NOT NULL DEFAULT ''",
+            );
+            await _ensureColumnExists(
+              db, 'products', 'units_per_package', 'REAL NOT NULL DEFAULT 0',
+            );
+            // وصف الصنف (مكونات الوجبة) يظهر في المنيو.
+            await _ensureColumnExists(
+              db, 'products', 'description', "TEXT NOT NULL DEFAULT ''",
+            );
+            // وحدة الشراء الفعلية ومعامل التحويل لكل بند في فاتورة الشراء.
+            await _ensureColumnExists(
+              db, 'purchase_items', 'unit', "TEXT NOT NULL DEFAULT ''",
+            );
+            await _ensureColumnExists(
+              db, 'purchase_items', 'conversion_factor', 'REAL NOT NULL DEFAULT 1',
+            );
+          }
+          if (oldVersion < 27) {
+            // === إكمال المخطط الناقص في القواعد القديمة (فشل إضافة
+            // العملاء/الحجوزات/الوصفات/المشتريات المربوطة بمورد) ===
+            await _ensureColumnExists(
+              db, 'customers', 'address', "TEXT NOT NULL DEFAULT ''",
+            );
+            await _ensureColumnExists(
+              db, 'customers', 'loyalty_points', 'INTEGER NOT NULL DEFAULT 0',
+            );
+            await _ensureColumnExists(
+              db, 'customers', 'notes', "TEXT NOT NULL DEFAULT ''",
+            );
+            await _ensureColumnExists(db, 'purchases', 'supplier_id', 'INTEGER');
+            await _ensureColumnExists(
+              db, 'supplier_payments', 'purchase_id', 'INTEGER',
+            );
+
+            // جداول ناقصة تمامًا في القواعد المنشأة حديثًا قبل الإصلاح.
+            await db.execute(_queueEntriesTable);
+            await db.execute(_recipesTable);
+            await db.execute(_recipeItemsTable);
+
+            // جدول الحجوزات: إن وُجد بمرجع مفتاح أجنبي خاطئ (tables)
+            // يُعاد إنشاؤه بالمرجع الصحيح (restaurant_tables).
+            final reservationSql = await db.rawQuery(
+              "SELECT sql FROM sqlite_master WHERE type='table' "
+              "AND name='reservations'",
+            );
+            final existingSql = reservationSql.isNotEmpty
+                ? (reservationSql.first['sql'] as String?) ?? ''
+                : '';
+            if (existingSql.contains('REFERENCES tables(')) {
+              await db.execute('DROP TABLE reservations');
+            }
+            await db.execute(_reservationsTable);
+          }
         },
       ),
     );
@@ -354,17 +657,69 @@ class AppDatabase {
     return databaseFactoryFfi;
   }
 
+  /// تحديد مسار ملف القاعدة في مجلد بيانات التطبيق الرسمي (ثابت على كل
+  /// الأنظمة ولا يتأثر بمكان التشغيل أو flutter clean)، مع ترحيل أي قاعدة
+  /// قديمة كانت محفوظة داخل .dart_tool عند أول تشغيل حتى لا تضيع البيانات.
+  Future<String> _resolveDbPath(DatabaseFactory factory) async {
+    if (overrideDatabasesPath != null) {
+      return p.join(overrideDatabasesPath!, AppConstants.dbName);
+    }
+
+    final newPath = p.join(await _resolveBaseDir(), AppConstants.dbName);
+
+    // ترحيل القاعدة من المسار القديم (المرتبط بمجلد المشروع) إن وُجدت.
+    try {
+      final legacy =
+          p.join(await factory.getDatabasesPath(), AppConstants.dbName);
+      final legacyFile = File(legacy);
+      if (!File(newPath).existsSync() && legacyFile.existsSync()) {
+        for (final suffix in ['', '-wal', '-shm']) {
+          final source = File('$legacy$suffix');
+          if (source.existsSync()) {
+            await source.copy('$newPath$suffix');
+          }
+        }
+      }
+    } catch (_) {
+      // تجاهل فشل الترحيل — يُفتح ملف جديد فارغ في المسار الثابت.
+    }
+
+    return newPath;
+  }
+
+  /// المجلد الأساسي لبيانات التطبيق: مجلد الدعم الرسمي، مع بدائل آمنة.
+  Future<String> _resolveBaseDir() async {
+    try {
+      return (await getApplicationSupportDirectory()).path;
+    } catch (_) {
+      final home =
+          Platform.environment['HOME'] ?? Platform.environment['USERPROFILE'];
+      if (home != null && home.isNotEmpty) {
+        return p.join(home, '.omni_order');
+      }
+      return Directory.systemTemp.path;
+    }
+  }
+
   static const String _productsTable = '''
     CREATE TABLE products(
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
       price REAL NOT NULL,
+      half_price REAL NOT NULL DEFAULT 0,
       stock REAL NOT NULL DEFAULT 0,
       unit TEXT NOT NULL DEFAULT 'قطعة',
       category_id INTEGER,
       cost_price REAL NOT NULL DEFAULT 0,
       low_stock_threshold REAL NOT NULL DEFAULT 0,
       barcode TEXT,
+      is_available INTEGER NOT NULL DEFAULT 1,
+      preparation_time INTEGER NOT NULL DEFAULT 0,
+      is_raw_material INTEGER NOT NULL DEFAULT 0,
+      image_path TEXT NOT NULL DEFAULT '',
+      package_unit TEXT NOT NULL DEFAULT '',
+      units_per_package REAL NOT NULL DEFAULT 0,
+      description TEXT NOT NULL DEFAULT '',
       created_at TEXT NOT NULL
     )
   ''';
@@ -386,7 +741,11 @@ class AppDatabase {
       refunded_at TEXT,
       amount_tendered REAL NOT NULL DEFAULT 0,
       card_amount REAL NOT NULL DEFAULT 0,
-      created_at TEXT NOT NULL
+      tip REAL NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      order_type TEXT NOT NULL DEFAULT 'عميل_عادي',
+      table_name TEXT NOT NULL DEFAULT '',
+      customer_name TEXT NOT NULL DEFAULT ''
     )
   ''';
 
@@ -424,7 +783,10 @@ class AppDatabase {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
       phone TEXT NOT NULL DEFAULT '',
+      address TEXT NOT NULL DEFAULT '',
       balance REAL NOT NULL DEFAULT 0,
+      loyalty_points INTEGER NOT NULL DEFAULT 0,
+      notes TEXT NOT NULL DEFAULT '',
       created_at TEXT NOT NULL
     )
   ''';
@@ -451,6 +813,7 @@ class AppDatabase {
   static const String _purchasesTable = '''
     CREATE TABLE purchases(
       id INTEGER PRIMARY KEY AUTOINCREMENT,
+      supplier_id INTEGER,
       supplier_name TEXT NOT NULL DEFAULT '',
       total REAL NOT NULL,
       paid_amount REAL NOT NULL DEFAULT 0,
@@ -468,6 +831,8 @@ class AppDatabase {
       quantity REAL NOT NULL,
       price REAL NOT NULL,
       subtotal REAL NOT NULL,
+      unit TEXT NOT NULL DEFAULT '',
+      conversion_factor REAL NOT NULL DEFAULT 1,
       FOREIGN KEY (purchase_id) REFERENCES purchases(id) ON DELETE CASCADE
     )
   ''';
@@ -496,6 +861,7 @@ class AppDatabase {
     CREATE TABLE supplier_payments(
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       supplier_id INTEGER NOT NULL,
+      purchase_id INTEGER,
       amount REAL NOT NULL,
       created_at TEXT NOT NULL
     )
@@ -535,6 +901,196 @@ class AppDatabase {
       quantity REAL NOT NULL,
       subtotal REAL NOT NULL,
       FOREIGN KEY (held_cart_id) REFERENCES held_carts(id) ON DELETE CASCADE
+    )
+  ''';
+
+  static const String _hallsTable = '''
+    CREATE TABLE halls(
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      capacity INTEGER NOT NULL DEFAULT 0,
+      is_active INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL
+    )
+  ''';
+
+  static const String _restaurantTablesTable = '''
+    CREATE TABLE restaurant_tables(
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      hall_id INTEGER NOT NULL,
+      number INTEGER NOT NULL,
+      capacity INTEGER NOT NULL DEFAULT 4,
+      status TEXT NOT NULL DEFAULT 'available',
+      current_order_id INTEGER,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (hall_id) REFERENCES halls(id) ON DELETE CASCADE
+    )
+  ''';
+
+  static const String _employeesTable = '''
+    CREATE TABLE employees(
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      phone TEXT NOT NULL DEFAULT '',
+      role TEXT NOT NULL DEFAULT 'waiter',
+      salary REAL NOT NULL DEFAULT 0,
+      is_active INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL
+    )
+  ''';
+
+  static const String _ordersTable = '''
+    CREATE TABLE orders(
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      table_id INTEGER,
+      hall_id INTEGER,
+      employee_id INTEGER,
+      rider_id INTEGER,
+      status TEXT NOT NULL DEFAULT 'pending',
+      order_type TEXT NOT NULL DEFAULT 'hall',
+      total REAL NOT NULL DEFAULT 0,
+      discount REAL NOT NULL DEFAULT 0,
+      tax_rate REAL NOT NULL DEFAULT 0,
+      tax_amount REAL NOT NULL DEFAULT 0,
+      payment_method TEXT NOT NULL DEFAULT 'نقدي',
+      cashier_name TEXT,
+      note TEXT,
+      is_takeaway INTEGER NOT NULL DEFAULT 0,
+      refunded INTEGER NOT NULL DEFAULT 0,
+      refunded_at TEXT,
+      amount_tendered REAL NOT NULL DEFAULT 0,
+      card_amount REAL NOT NULL DEFAULT 0,
+      delivery_address TEXT NOT NULL DEFAULT '',
+      delivery_phone TEXT NOT NULL DEFAULT '',
+      delivery_notes TEXT NOT NULL DEFAULT '',
+      delivery_person_name TEXT NOT NULL DEFAULT '',
+      delivery_fee REAL NOT NULL DEFAULT 0,
+      completed_at TEXT,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (table_id) REFERENCES restaurant_tables(id),
+      FOREIGN KEY (hall_id) REFERENCES halls(id),
+      FOREIGN KEY (rider_id) REFERENCES employees(id)
+    )
+  ''';
+
+  static const String _orderItemsTable = '''
+    CREATE TABLE order_items(
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      order_id INTEGER NOT NULL,
+      product_id INTEGER NOT NULL,
+      name TEXT NOT NULL,
+      price REAL NOT NULL,
+      quantity REAL NOT NULL,
+      subtotal REAL NOT NULL,
+      notes TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'pending',
+      FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE
+    )
+  ''';
+
+  static const String _employeeAdvancesTable = '''
+    CREATE TABLE employee_advances(
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      employee_id INTEGER NOT NULL,
+      amount REAL NOT NULL,
+      type TEXT NOT NULL DEFAULT 'advance',
+      note TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (employee_id) REFERENCES employees(id) ON DELETE CASCADE
+    )
+  ''';
+
+  static const String _orderStatusHistoryTable = '''
+    CREATE TABLE order_status_history(
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      order_id INTEGER NOT NULL,
+      status TEXT NOT NULL,
+      note TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE
+    )
+  ''';
+
+  static const String _riderTransactionsTable = '''
+    CREATE TABLE rider_transactions(
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      rider_id INTEGER NOT NULL,
+      type TEXT NOT NULL,
+      amount REAL NOT NULL DEFAULT 0,
+      order_id INTEGER,
+      note TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (rider_id) REFERENCES employees(id) ON DELETE CASCADE,
+      FOREIGN KEY (order_id) REFERENCES orders(id)
+    )
+  ''';
+
+  static const String _couponsTable = '''
+    CREATE TABLE coupons(
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      code TEXT NOT NULL UNIQUE,
+      description TEXT NOT NULL DEFAULT '',
+      discount_type TEXT NOT NULL DEFAULT 'percent',
+      discount_value REAL NOT NULL DEFAULT 0,
+      min_order REAL NOT NULL DEFAULT 0,
+      max_uses INTEGER NOT NULL DEFAULT 0,
+      used_count INTEGER NOT NULL DEFAULT 0,
+      is_active INTEGER NOT NULL DEFAULT 1,
+      expires_at TEXT,
+      created_at TEXT NOT NULL
+    )
+  ''';
+
+  // ==== جداول كانت تُنشأ في الترحيلات فقط — أصبحت جزءًا من المخطط الأساسي ====
+
+  static const String _reservationsTable = '''
+    CREATE TABLE IF NOT EXISTS reservations(
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      table_id INTEGER NOT NULL,
+      table_number INTEGER NOT NULL,
+      customer_name TEXT NOT NULL DEFAULT '',
+      customer_phone TEXT NOT NULL DEFAULT '',
+      party_size INTEGER NOT NULL DEFAULT 2,
+      reservation_time TEXT NOT NULL,
+      note TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'confirmed',
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (table_id) REFERENCES restaurant_tables(id) ON DELETE CASCADE
+    )
+  ''';
+
+  static const String _queueEntriesTable = '''
+    CREATE TABLE IF NOT EXISTS queue_entries(
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      customer_name TEXT NOT NULL DEFAULT '',
+      customer_phone TEXT NOT NULL DEFAULT '',
+      party_size INTEGER NOT NULL DEFAULT 2,
+      status TEXT NOT NULL DEFAULT 'waiting',
+      note TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL
+    )
+  ''';
+
+  static const String _recipesTable = '''
+    CREATE TABLE IF NOT EXISTS recipes(
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      product_id INTEGER NOT NULL,
+      product_name TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
+    )
+  ''';
+
+  static const String _recipeItemsTable = '''
+    CREATE TABLE IF NOT EXISTS recipe_items(
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      recipe_id INTEGER NOT NULL,
+      raw_material_id INTEGER NOT NULL,
+      raw_material_name TEXT NOT NULL DEFAULT '',
+      quantity REAL NOT NULL DEFAULT 0,
+      unit TEXT NOT NULL DEFAULT 'كجم',
+      FOREIGN KEY (recipe_id) REFERENCES recipes(id) ON DELETE CASCADE,
+      FOREIGN KEY (raw_material_id) REFERENCES products(id) ON DELETE CASCADE
     )
   ''';
 }

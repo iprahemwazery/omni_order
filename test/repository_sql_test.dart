@@ -4,9 +4,12 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:omni_order/core/constants.dart';
 import 'package:omni_order/data/database/app_database.dart';
 import 'package:omni_order/data/repositories/store_repository_impl.dart';
-import 'package:omni_order/domain/models/customer.dart';
+import 'package:omni_order/domain/models/hall.dart';
 import 'package:omni_order/domain/models/held_cart.dart';
+import 'package:omni_order/domain/models/order.dart';
+import 'package:omni_order/domain/models/order_item.dart';
 import 'package:omni_order/domain/models/product.dart';
+import 'package:omni_order/domain/models/restaurant_table.dart';
 import 'package:omni_order/domain/models/sale.dart';
 import 'package:omni_order/domain/models/sale_item.dart';
 import 'package:path/path.dart' as p;
@@ -30,48 +33,162 @@ void main() {
       final file = File(p.join(dir, name));
       if (file.existsSync()) file.deleteSync();
     }
+    AppDatabase.overrideDatabasesPath = dir;
     repository = StoreRepositoryImpl(AppDatabase.instance);
     await repository.init();
   }
 
   setUp(freshDatabase);
 
-  test('البيع الآجل يحدّث مديونية العميل داخل نفس المعاملة', () async {
-    final customerId = await repository.addCustomer(
-      Customer(name: 'أحمد', phone: '012'),
-    );
-    final productId = await repository.addProduct(
-      Product(name: 'شاي', price: 10, stock: 20),
-    );
-
-    final saleId = await repository.createSale(
-      sale: Sale(
-        total: 10,
-        itemsCount: 1,
-        paymentMethod: 'آجل',
-        customerId: customerId,
+  Future<int> createHallOrder({
+    required int productId,
+    required int hallId,
+    int? tableId,
+    double total = 20,
+  }) {
+    return repository.createOrder(
+      order: RestaurantOrder(
+        tableId: tableId,
+        hallId: hallId,
+        total: total,
+        orderType: OrderType.hall.name,
       ),
       items: [
-        SaleItem(
-          saleId: 0,
+        OrderItem(
+          orderId: 0,
           productId: productId,
-          name: 'شاي',
-          price: 10,
-          costPrice: 5,
+          name: 'طبق',
+          price: total,
           quantity: 1,
-          subtotal: 10,
+          subtotal: total,
         ),
       ],
     );
+  }
 
-    expect(saleId, greaterThan(0));
-    final customers = await repository.getCustomers();
-    final customer = customers.firstWhere((c) => c.id == customerId);
-    expect(customer.balance, 10);
+  test('تسديد الطاولة يحتسب الطلبات غير المسددة فقط ويحررها', () async {
+    final productId = await repository.addProduct(
+      Product(name: 'طبق', price: 20, stock: 20),
+    );
+    final hallId = await repository.addHall(Hall(name: 'الصالة'));
+    final tableId = await repository.addTable(
+      RestaurantTable(hallId: hallId, number: 1),
+    );
 
-    final saved = await repository.getSale(saleId);
-    expect(saved!.paymentMethod, 'آجل');
-    expect(saved.customerId, customerId);
+    final pendingId = await createHallOrder(
+      productId: productId,
+      hallId: hallId,
+      tableId: tableId,
+      total: 20,
+    );
+    final servedId = await createHallOrder(
+      productId: productId,
+      hallId: hallId,
+      tableId: tableId,
+      total: 30,
+    );
+    await repository.updateOrderStatus(servedId, OrderStatus.served);
+    expect(
+      (await repository.getTableOrders(tableId)).length,
+      2,
+      reason: 'الطلب المقدم يبقى على الطاولة حتى الدفع',
+    );
+
+    expect(await repository.payTable(tableId, 'نقدي'), 50);
+    expect((await repository.getTable(tableId))?.status, TableStatus.available);
+    expect(
+      (await repository.getOrder(pendingId))?.orderStatus,
+      OrderStatus.paid,
+    );
+    expect((await repository.getOrder(servedId))?.paymentMethod, 'نقدي');
+    expect(await repository.payTable(tableId, 'نقدي'), 0);
+    expect((await repository.getTableOrders(tableId)), isEmpty);
+  });
+
+  test('لا يمكن إلغاء طلب تم تسديده', () async {
+    final productId = await repository.addProduct(
+      Product(name: 'طبق', price: 20, stock: 20),
+    );
+    final hallId = await repository.addHall(Hall(name: 'الصالة'));
+    final tableId = await repository.addTable(
+      RestaurantTable(hallId: hallId, number: 1),
+    );
+    final orderId = await createHallOrder(
+      productId: productId,
+      hallId: hallId,
+      tableId: tableId,
+    );
+    await repository.payTable(tableId, 'نقدي');
+
+    await expectLater(repository.cancelOrder(orderId), throwsStateError);
+    expect((await repository.getOrder(orderId))?.orderStatus, OrderStatus.paid);
+  });
+
+  test('تحديث حالة طلب غير موجود لا يرمي استثناء', () async {
+    await expectLater(
+      repository.updateOrderStatus(9999, OrderStatus.served),
+      completes,
+    );
+    expect(await repository.getOrderStatusHistory(9999), isEmpty);
+  });
+
+  test('تحديث حالة الطلب يحافظ على الطاولة عند وجود طلب نشط', () async {
+    final productId = await repository.addProduct(
+      Product(name: 'طبق', price: 20, stock: 20),
+    );
+    final hallId = await repository.addHall(Hall(name: 'الصالة'));
+    final tableId = await repository.addTable(
+      RestaurantTable(hallId: hallId, number: 1),
+    );
+
+    Future<int> createOrder() {
+      return repository.createOrder(
+        order: RestaurantOrder(
+          tableId: tableId,
+          hallId: hallId,
+          total: 20,
+          orderType: OrderType.hall.name,
+        ),
+        items: [
+          OrderItem(
+            orderId: 0,
+            productId: productId,
+            name: 'طبق',
+            price: 20,
+            quantity: 1,
+            subtotal: 20,
+          ),
+        ],
+      );
+    }
+
+    final firstOrderId = await createOrder();
+    final secondOrderId = await createOrder();
+
+    await repository.updateOrderStatus(
+      firstOrderId,
+      OrderStatus.served,
+      note: 'تم التقديم',
+    );
+    expect((await repository.getTable(tableId))?.status, TableStatus.occupied);
+    expect(
+      (await repository.getOrderStatusHistory(
+        firstOrderId,
+      )).any((entry) => entry.status == OrderStatus.served.name),
+      isTrue,
+    );
+
+    await repository.cancelOrder(secondOrderId);
+    expect((await repository.getTable(tableId))?.status, TableStatus.occupied);
+    expect(
+      (await repository.getOrderStatusHistory(
+        secondOrderId,
+      )).any((entry) => entry.status == OrderStatus.cancelled.name),
+      isTrue,
+    );
+
+    expect(await repository.payTable(tableId, 'نقدي'), 20);
+    expect((await repository.getTable(tableId))?.status, TableStatus.available);
   });
 
   test('getDayHistory يستبعد الفواتير المرتجعة', () async {
@@ -191,40 +308,48 @@ void main() {
     );
   }
 
-  test('البيع ينشئ وردية تلقائيًا ويحتسب تقرير الوردية حسب طريقة الدفع', () async {
-    expect(await repository.getOpenShift('admin'), isNull);
+  test(
+    'البيع ينشئ وردية تلقائيًا ويحتسب تقرير الوردية حسب طريقة الدفع',
+    () async {
+      expect(await repository.getOpenShift('admin'), isNull);
 
-    await createSale(total: 100, method: 'نقدي', tendered: 100);
-    await createSale(total: 50, method: 'شبكة');
-    await createSale(total: 40, method: 'مختلط', card: 10);
-    await createSale(total: 30, method: 'آجل');
-    await createSale(total: 200, method: 'نقدي', tendered: 250, cashier: 'sara');
+      await createSale(total: 100, method: 'نقدي', tendered: 100);
+      await createSale(total: 50, method: 'شبكة');
+      await createSale(total: 40, method: 'مختلط', card: 10);
+      await createSale(total: 30, method: 'آجل');
+      await createSale(
+        total: 200,
+        method: 'نقدي',
+        tendered: 250,
+        cashier: 'sara',
+      );
 
-    final open = await repository.getOpenShift('admin');
-    expect(open, isNotNull);
-    expect(open!.isOpen, isTrue);
+      final open = await repository.getOpenShift('admin');
+      expect(open, isNotNull);
+      expect(open!.isOpen, isTrue);
 
-    final report = await repository.getShiftReport(open);
-    expect(report.salesCount, 4);
-    expect(report.cashTotal, 100);
-    expect(report.cardTotal, 50);
-    expect(report.walletTotal, 0);
-    expect(report.transferTotal, 0);
-    expect(report.mixedTotal, 40);
-    expect(report.mixedCardPortion, 10);
-    expect(report.deferredTotal, 30);
-    expect(report.totalSales, 220);
-    expect(report.cashReceived, 130); // 100 نقدي + 30 (نقد المختلط)
-    expect(report.cardReceived, 60); // 50 شبكة + 10 شبكة المختلط
+      final report = await repository.getShiftReport(open);
+      expect(report.salesCount, 4);
+      expect(report.cashTotal, 100);
+      expect(report.cardTotal, 50);
+      expect(report.walletTotal, 0);
+      expect(report.transferTotal, 0);
+      expect(report.mixedTotal, 40);
+      expect(report.mixedCardPortion, 10);
+      expect(report.deferredTotal, 30);
+      expect(report.totalSales, 220);
+      expect(report.cashReceived, 130); // 100 نقدي + 30 (نقد المختلط)
+      expect(report.cardReceived, 60); // 50 شبكة + 10 شبكة المختلط
 
-    // وردية كاشير آخر منفصلة.
-    final saraOpen = await repository.getOpenShift('sara');
-    expect(saraOpen, isNotNull);
-    final saraReport = await repository.getShiftReport(saraOpen!);
-    expect(saraReport.salesCount, 1);
-    expect(saraReport.cashTotal, 200);
-    expect(saraReport.changeGiven, 50);
-  });
+      // وردية كاشير آخر منفصلة.
+      final saraOpen = await repository.getOpenShift('sara');
+      expect(saraOpen, isNotNull);
+      final saraReport = await repository.getShiftReport(saraOpen!);
+      expect(saraReport.salesCount, 1);
+      expect(saraReport.cashTotal, 200);
+      expect(saraReport.changeGiven, 50);
+    },
+  );
 
   test('الباقي المُصرف يُحتسب في تقرير الوردية', () async {
     await createSale(total: 100, method: 'نقدي', tendered: 150);

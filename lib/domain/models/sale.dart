@@ -16,6 +16,15 @@ class Sale {
   final bool refunded;
   final DateTime createdAt;
 
+  /// نوع البيع: 'عميل_عادي' | 'صاله' | 'دلفري'
+  final String orderType;
+
+  /// اسم التريبية (عند بيع الصاله).
+  final String tableName;
+
+  /// اسم العميل (عند البيع بالدلفري).
+  final String customerName;
+
   /// توقيت تسجيل المرتجع (يُستخدم لإسناد المرتجع إلى الوردية التي حدث فيها).
   final DateTime? refundedAt;
 
@@ -24,6 +33,9 @@ class Sale {
 
   /// الجزء المدفوع بالشبكة في حالة الدفع المختلط (نقدي + شبكة).
   final double cardAmount;
+
+  /// بقشيش العميل.
+  final double tip;
 
   Sale({
     this.id,
@@ -40,7 +52,11 @@ class Sale {
     this.refunded = false,
     this.amountTendered = 0,
     this.cardAmount = 0,
+    this.tip = 0,
     this.refundedAt,
+    this.orderType = 'عميل_عادي',
+    this.tableName = '',
+    this.customerName = '',
     DateTime? createdAt,
   }) : createdAt = createdAt ?? DateTime.now();
 
@@ -63,8 +79,12 @@ class Sale {
         'refunded': refunded ? 1 : 0,
         'amount_tendered': amountTendered,
         'card_amount': cardAmount,
+        'tip': tip,
         if (refundedAt != null) 'refunded_at': refundedAt!.toIso8601String(),
         'created_at': createdAt.toIso8601String(),
+        'order_type': orderType,
+        if (tableName.isNotEmpty) 'table_name': tableName,
+        if (customerName.isNotEmpty) 'customer_name': customerName,
       };
 
   Sale copyWith({
@@ -82,8 +102,12 @@ class Sale {
     bool? refunded,
     double? amountTendered,
     double? cardAmount,
+    double? tip,
     DateTime? refundedAt,
     DateTime? createdAt,
+    String? orderType,
+    String? tableName,
+    String? customerName,
   }) {
     return Sale(
       id: id ?? this.id,
@@ -100,8 +124,12 @@ class Sale {
       refunded: refunded ?? this.refunded,
       amountTendered: amountTendered ?? this.amountTendered,
       cardAmount: cardAmount ?? this.cardAmount,
+      tip: tip ?? this.tip,
       refundedAt: refundedAt ?? this.refundedAt,
       createdAt: createdAt ?? this.createdAt,
+      orderType: orderType ?? this.orderType,
+      tableName: tableName ?? this.tableName,
+      customerName: customerName ?? this.customerName,
     );
   }
 
@@ -121,10 +149,14 @@ class Sale {
       refunded: (map['refunded'] as int? ?? 0) == 1,
       amountTendered: (map['amount_tendered'] as num?)?.toDouble() ?? 0,
       cardAmount: (map['card_amount'] as num?)?.toDouble() ?? 0,
+      tip: (map['tip'] as num?)?.toDouble() ?? 0,
       refundedAt: map['refunded_at'] == null
           ? null
           : DateTime.tryParse(map['refunded_at'] as String),
       createdAt: DateTime.parse(map['created_at'] as String),
+      orderType: map['order_type'] as String? ?? 'عميل_عادي',
+      tableName: map['table_name'] as String? ?? '',
+      customerName: map['customer_name'] as String? ?? '',
     );
   }
 }

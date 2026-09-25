@@ -1,6 +1,6 @@
 import '../../core/constants.dart';
 
-/// إعدادات المتجر (اسمه، الهاتف، العملة، المظهر) التي تظهر على الفاتورة.
+/// إعدادات المطعم (اسمه، الهاتف، العملة، المظهر) التي تظهر على الفاتورة.
 class StoreSettings {
   final String storeName;
   final String phone;

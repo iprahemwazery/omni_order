@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:omni_order/domain/models/product.dart';
-import 'package:omni_order/features/customers/presentation/customers_cubit.dart';
 import 'package:omni_order/features/products/presentation/products_cubit.dart';
 import 'package:omni_order/features/sales/presentation/cart_cubit.dart';
 import 'package:omni_order/features/sales/presentation/sales_cubit.dart';
@@ -14,23 +13,19 @@ void main() {
   group('CartCubit - المبلغ المدفوع والباقي', () {
     late FakeStoreRepository repository;
     late ProductsCubit products;
-    late CustomersCubit customers;
     late SalesCubit sales;
     late CartCubit cart;
 
     setUp(() async {
       repository = FakeStoreRepository();
       products = ProductsCubit(repository);
-      customers = CustomersCubit(repository);
       sales = SalesCubit(repository);
       cart = CartCubit(
         repository: repository,
         productsCubit: products,
-        customersCubit: customers,
         salesCubit: sales,
       );
       await products.init();
-      await customers.init();
       await sales.init();
     });
 
@@ -75,13 +70,15 @@ void main() {
       await repo.addProduct(Product(name: 'عصير', price: 10, stock: 20));
       await pumpApp(tester, repo);
 
-      await tester.tap(find.text('بيع جديد'));
+      await tester.tap(find.text('طلب جديد'));
       await tester.pumpAndSettle();
       await tester.tap(find.byIcon(Icons.add));
       await tester.pumpAndSettle();
       await tester.tap(find.text('عرض السلة'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('إتمام البيع'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('عميل عادي'));
       await tester.pumpAndSettle();
     }
 

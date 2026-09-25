@@ -1,86 +1,114 @@
 import 'package:flutter_bloc/flutter_bloc.dart';
 
-import '../../../../core/utils/error_utils.dart';
-import '../../../../domain/models/customer.dart';
-import '../../../../domain/models/customer_payment.dart';
-import '../../../../domain/repositories/store_repository.dart';
-import 'customers_state.dart';
+import '../../../domain/models/customer.dart';
+import '../../../domain/repositories/store_repository.dart';
+import '../domain/usecases/customer_usecases.dart';
 
-/// يدير قائمة العملاء والمديونيات وتسجيل السداد.
+class CustomersState {
+  final List<Customer> customers;
+  final bool loading;
+  final String? error;
+
+  const CustomersState({
+    this.customers = const [],
+    this.loading = false,
+    this.error,
+  });
+
+  CustomersState copyWith({
+    List<Customer>? customers,
+    bool? loading,
+    String? error,
+  }) {
+    return CustomersState(
+      customers: customers ?? this.customers,
+      loading: loading ?? this.loading,
+      error: error,
+    );
+  }
+
+  int get totalLoyaltyPoints =>
+      customers.fold<int>(0, (s, c) => s + c.loyaltyPoints);
+}
+
 class CustomersCubit extends Cubit<CustomersState> {
-  CustomersCubit(this._repository)
-      : super(const CustomersState(loading: true));
+  CustomersCubit(
+    this._repository, {
+    GetCustomersUseCase? getCustomers,
+    CreateCustomerUseCase? createCustomer,
+    UpdateCustomerUseCase? updateCustomer,
+    DeleteCustomerUseCase? deleteCustomer,
+    AddCustomerLoyaltyPointsUseCase? addLoyaltyPoints,
+  }) : _getCustomers = getCustomers,
+       _createCustomer = createCustomer,
+       _updateCustomer = updateCustomer,
+       _deleteCustomer = deleteCustomer,
+       _addLoyaltyPoints = addLoyaltyPoints,
+       super(const CustomersState());
 
   final StoreRepository _repository;
+  final GetCustomersUseCase? _getCustomers;
+  final CreateCustomerUseCase? _createCustomer;
+  final UpdateCustomerUseCase? _updateCustomer;
+  final DeleteCustomerUseCase? _deleteCustomer;
+  final AddCustomerLoyaltyPointsUseCase? _addLoyaltyPoints;
 
   Future<void> init() async {
-    emit(const CustomersState(loading: true));
-    await refresh();
-  }
-
-  Future<void> refresh() async {
+    emit(state.copyWith(loading: true));
     try {
-      final customers = await _repository.getCustomers();
+      final customers =
+          await (_getCustomers?.call() ?? _repository.getCustomers());
       emit(CustomersState(customers: customers));
     } catch (e) {
-      emit(state.copyWith(error: safeErrorMessage('تعذر تحميل العملاء', e)));
+      emit(state.copyWith(loading: false, error: 'تعذر تحميل العملاء: $e'));
     }
   }
 
-  /// يضيف عميلًا ويعيد (العميل الجديد مع رقمه، أو رسالة خطأ).
-  Future<(Customer?, String?)> addCustomer(String name,
-      {String phone = ''}) async {
-    final trimmed = name.trim();
-    if (trimmed.isEmpty) return (null, 'اكتب اسم العميل.');
-    try {
-      final phoneTrimmed = phone.trim();
-      final id = await _repository.addCustomer(
-        Customer(name: trimmed, phone: phoneTrimmed),
-      );
-      final created = Customer(id: id, name: trimmed, phone: phoneTrimmed);
-      emit(state.copyWith(customers: [...state.customers, created]));
-      return (created, null);
-    } catch (e) {
-      return (null, safeErrorMessage('تعذر إضافة العميل', e));
+  Future<String?> addCustomer(Customer customer) async {
+    final trimmed = customer.name.trim();
+    if (trimmed.isEmpty) return 'اكتب اسم العميل.';
+    final exists = state.customers.any((c) => c.name.trim() == trimmed);
+    if (exists) return 'العميل "$trimmed" موجود بالفعل.';
+    if (_createCustomer != null) {
+      await _createCustomer(customer);
+    } else {
+      await _repository.addCustomer(customer);
     }
+    await init();
+    return null;
   }
 
-  Future<void> updateCustomer(Customer customer) async {
-    await _repository.updateCustomer(customer);
-    emit(state.copyWith(
-      customers: [
-        for (final c in state.customers) c.id == customer.id ? customer : c,
-      ],
-    ));
-  }
-
-  Future<void> deleteCustomer(Customer customer) async {
-    if (customer.id == null) return;
-    await _repository.deleteCustomer(customer.id!);
-    emit(state.copyWith(
-      customers: state.customers.where((c) => c.id != customer.id).toList(),
-    ));
-  }
-
-  /// تسجيل سداد جزء من مديونية عميل مع حفظه في سجل الحركة.
-  Future<String?> recordCustomerPayment(Customer customer, double amount) async {
-    if (amount <= 0) return 'أدخل مبلغًا أكبر من صفر.';
-    if (customer.id == null) return 'عميل غير صالح.';
-    if (amount > customer.balance) return 'المبلغ أكبر من المديونية.';
-    try {
-      await _repository.addCustomerPayment(
-        CustomerPayment(customerId: customer.id!, amount: amount),
-      );
-      await refresh();
-      return null;
-    } catch (e) {
-      return safeErrorMessage('تعذر تسجيل السداد', e);
+  Future<String?> updateCustomer(Customer customer) async {
+    final trimmed = customer.name.trim();
+    if (trimmed.isEmpty) return 'اكتب اسم العميل.';
+    final exists = state.customers.any(
+      (c) => c.id != customer.id && c.name.trim() == trimmed,
+    );
+    if (exists) return 'العميل "$trimmed" موجود بالفعل.';
+    if (_updateCustomer != null) {
+      await _updateCustomer(customer);
+    } else {
+      await _repository.updateCustomer(customer);
     }
+    await init();
+    return null;
   }
 
-  /// سجل دفعات هذا العميل (الأحدث أولًا).
-  Future<List<CustomerPayment>> paymentsOf(Customer customer) async {
-    if (customer.id == null) return const [];
-    return _repository.getCustomerPayments(customer.id!);
+  Future<void> deleteCustomer(int id) async {
+    if (_deleteCustomer != null) {
+      await _deleteCustomer(id);
+    } else {
+      await _repository.deleteCustomer(id);
+    }
+    await init();
+  }
+
+  Future<void> addLoyaltyPoints(int customerId, int points) async {
+    if (_addLoyaltyPoints != null) {
+      await _addLoyaltyPoints(customerId: customerId, points: points);
+    } else {
+      await _repository.addLoyaltyPoints(customerId, points);
+    }
+    await init();
   }
 }

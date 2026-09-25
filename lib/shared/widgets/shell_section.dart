@@ -1,0 +1,25 @@
+/// أقسام التطبيق التي تُفتح داخل الهيكل الثابت
+/// (القائمة الجانبية + البار العلوي ثابتان والمحتوى فقط يتبدل).
+enum ShellSection {
+  dashboard,
+  sales,
+  delivery,
+  waiterOrders,
+  kitchen,
+  ordersHistory,
+  deferredSales,
+  shift,
+  reports,
+  products,
+  recipes,
+  suppliers,
+  customers,
+  reservations,
+  queue,
+  halls,
+  tables,
+  expenses,
+  coupons,
+  riderBalance,
+  employees,
+}

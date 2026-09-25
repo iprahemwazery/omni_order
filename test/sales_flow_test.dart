@@ -23,7 +23,7 @@ void main() {
     await pumpAppOnPhone(tester, repository);
 
     // الدخول لشاشة البيع
-    await tester.tap(find.text('بيع جديد'));
+    await tester.tap(find.text('طلب جديد'));
     await tester.pumpAndSettle();
     expect(find.text('المبيعات'), findsOneWidget);
 
@@ -55,8 +55,13 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('إتمام البيع'), findsOneWidget);
 
-    // إتمام البيع (يفتح شاشة تأكيد البيع)
+    // إتمام البيع (يفتح شاشة اختيار نوع البيع)
     await tester.tap(find.text('إتمام البيع'));
+    await tester.pumpAndSettle();
+    expect(find.text('نوع البيع'), findsOneWidget);
+
+    // اختيار عميل عادي
+    await tester.tap(find.text('عميل عادي'));
     await tester.pumpAndSettle();
     expect(find.text('تأكيد البيع'), findsOneWidget);
     expect(find.text('نقدي'), findsOneWidget);

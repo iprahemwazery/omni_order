@@ -2,7 +2,6 @@ import 'package:equatable/equatable.dart';
 
 import '../../../../core/constants/payment_methods.dart';
 import '../../../../domain/models/cart_line.dart';
-import '../../../../domain/models/customer.dart';
 import '../../../../domain/models/product.dart';
 
 /// حالة السلة أثناء عملية البيع.
@@ -11,17 +10,19 @@ class CartState extends Equatable {
     this.lines = const [],
     this.discount = 0,
     this.paymentMethod = PaymentMethod.cash,
-    this.selectedCustomer,
     this.note = '',
     this.amountTendered = 0,
     this.cardAmount = 0,
+    this.tip = 0,
     this.completing = false,
+    this.orderType = 'عميل_عادي',
+    this.tableName = '',
+    this.customerName = '',
   });
 
   final List<CartLine> lines;
   final double discount;
   final String paymentMethod;
-  final Customer? selectedCustomer;
   final String note;
 
   /// المبلغ الذي دفعه العميل (لحساب الباقي). صفر = الصافي كاملًا.
@@ -29,7 +30,19 @@ class CartState extends Equatable {
 
   /// الجزء المدفوع بالشبكة في حالة الدفع المختلط.
   final double cardAmount;
+
+  /// بقشيش العميل.
+  final double tip;
   final bool completing;
+
+  /// نوع البيع: 'عميل_عادي' | 'صاله' | 'دلفري'
+  final String orderType;
+
+  /// اسم التريبية (عند بيع الصاله).
+  final String tableName;
+
+  /// اسم العميل (عند البيع بالدلفري).
+  final String customerName;
 
   bool get isEmpty => lines.isEmpty;
 
@@ -59,21 +72,27 @@ class CartState extends Equatable {
     List<CartLine>? lines,
     double? discount,
     String? paymentMethod,
-    Customer? selectedCustomer,
     String? note,
     double? amountTendered,
     double? cardAmount,
+    double? tip,
     bool? completing,
+    String? orderType,
+    String? tableName,
+    String? customerName,
   }) {
     return CartState(
       lines: lines ?? this.lines,
       discount: discount ?? this.discount,
       paymentMethod: paymentMethod ?? this.paymentMethod,
-      selectedCustomer: selectedCustomer ?? this.selectedCustomer,
       note: note ?? this.note,
       amountTendered: amountTendered ?? this.amountTendered,
       cardAmount: cardAmount ?? this.cardAmount,
+      tip: tip ?? this.tip,
       completing: completing ?? this.completing,
+      orderType: orderType ?? this.orderType,
+      tableName: tableName ?? this.tableName,
+      customerName: customerName ?? this.customerName,
     );
   }
 
@@ -82,10 +101,13 @@ class CartState extends Equatable {
         lines,
         discount,
         paymentMethod,
-        selectedCustomer,
         note,
         amountTendered,
         cardAmount,
+        tip,
         completing,
+        orderType,
+        tableName,
+        customerName,
       ];
 }

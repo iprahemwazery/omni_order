@@ -14,13 +14,11 @@ class ReceiptView extends StatelessWidget {
     required this.sale,
     required this.items,
     required this.settings,
-    this.customerName,
   });
 
   final Sale sale;
   final List<SaleItem> items;
   final StoreSettings settings;
-  final String? customerName;
 
   @override
   Widget build(BuildContext context) {
@@ -68,7 +66,7 @@ class ReceiptView extends StatelessWidget {
           width: 56,
           height: 56,
           decoration: const BoxDecoration(
-            color: Color(0xFFE8F1EF),
+            color: AppColors.primaryLight,
             shape: BoxShape.circle,
           ),
           child: const Icon(
@@ -87,14 +85,17 @@ class ReceiptView extends StatelessWidget {
           const SizedBox(height: 2),
           Text(
             settings.phone,
-            style: const TextStyle(color: AppColors.textSecondary, fontSize: 13),
+            style: const TextStyle(
+              color: AppColors.textSecondary,
+              fontSize: 13,
+            ),
           ),
         ],
         const SizedBox(height: 8),
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 5),
           decoration: BoxDecoration(
-            color: const Color(0xFFE8F1EF),
+            color: AppColors.primaryLight,
             borderRadius: BorderRadius.circular(20),
           ),
           child: const Text(
@@ -111,12 +112,37 @@ class ReceiptView extends StatelessWidget {
   }
 
   Widget _buildInfo(BuildContext context) {
+    final orderTypeLabel = switch (sale.orderType) {
+      'صاله' => 'صاله',
+      'دلفري' => 'دلفري',
+      _ => 'عميل عادي',
+    };
+    final extraInfo = <Widget>[];
+    if (sale.tableName.isNotEmpty) {
+      extraInfo.add(
+        _InfoChip(
+          icon: Icons.table_restaurant_outlined,
+          text: 'تريبية: ${sale.tableName}',
+        ),
+      );
+    }
+    if (sale.customerName.isNotEmpty) {
+      extraInfo.add(
+        _InfoChip(
+          icon: Icons.delivery_dining_outlined,
+          text: 'المندوب: ${sale.customerName}',
+        ),
+      );
+    }
     return Column(
       children: [
         Row(
           children: [
             Expanded(
-              child: _InfoCell(label: 'رقم الفاتورة', value: '#${sale.id ?? 0}'),
+              child: _InfoCell(
+                label: 'رقم الفاتورة',
+                value: '#${sale.id ?? 0}',
+              ),
             ),
             Expanded(
               child: _InfoCell(
@@ -133,20 +159,21 @@ class ReceiptView extends StatelessWidget {
           ],
         ),
         const SizedBox(height: 10),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.center,
+        Wrap(
+          alignment: WrapAlignment.center,
+          spacing: 8,
+          runSpacing: 6,
           children: [
             _InfoChip(icon: Icons.payment, text: sale.paymentMethod),
-            if (customerName != null) ...[
-              const SizedBox(width: 8),
-              _InfoChip(icon: Icons.person_outline, text: customerName!),
-            ],
-            if (sale.cashierName.isNotEmpty) ...[
-              const SizedBox(width: 8),
+            _InfoChip(icon: Icons.category_outlined, text: orderTypeLabel),
+            if (sale.cashierName.isNotEmpty)
               _InfoChip(icon: Icons.badge_outlined, text: sale.cashierName),
-            ],
           ],
         ),
+        if (extraInfo.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          Row(mainAxisAlignment: MainAxisAlignment.center, children: extraInfo),
+        ],
       ],
     );
   }
@@ -236,10 +263,7 @@ class ReceiptView extends StatelessWidget {
           const SizedBox(height: 8),
           _TotalLine(
             label: 'المدفوع',
-            value: AppFormatters.money(
-              sale.amountTendered,
-              settings.currency,
-            ),
+            value: AppFormatters.money(sale.amountTendered, settings.currency),
           ),
           const SizedBox(height: 4),
           _TotalLine(
@@ -280,11 +304,9 @@ class ReceiptView extends StatelessWidget {
         ],
         if (sale.paymentMethod == PaymentMethod.deferred) ...[
           const SizedBox(height: 8),
-          Text(
-            customerName == null
-                ? 'تم تسجيل المبلغ كدين'
-                : 'تم تسجيل المبلغ دينًا على $customerName',
-            style: const TextStyle(
+          const Text(
+            'دين',
+            style: TextStyle(
               color: AppColors.warning,
               fontSize: 12,
               fontWeight: FontWeight.w700,
@@ -316,7 +338,7 @@ class ReceiptView extends StatelessWidget {
         ),
         const SizedBox(height: 6),
         const Text(
-          'نظام أومني أوردر لإدارة المحلات',
+          'Ocean Catch - نظام إدارة المطاعم',
           textAlign: TextAlign.center,
           style: TextStyle(color: AppColors.border, fontSize: 10),
         ),
@@ -342,7 +364,10 @@ class _ItemRow extends StatelessWidget {
             children: [
               Text(
                 item.name,
-                style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
+                style: const TextStyle(
+                  fontWeight: FontWeight.w700,
+                  fontSize: 14,
+                ),
               ),
               const SizedBox(height: 2),
               Text(

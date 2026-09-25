@@ -140,7 +140,7 @@ class _DayNetBanner extends StatelessWidget {
         gradient: LinearGradient(
           colors: profit
               ? const [AppColors.primary, AppColors.primaryDark]
-              : const [AppColors.error, Color(0xFF8A2B2B)],
+              : const [AppColors.error, Color(0xFF7A282C)],
           begin: Alignment.topRight,
           end: Alignment.bottomLeft,
         ),
@@ -260,7 +260,7 @@ class _DaySaleTile extends StatelessWidget {
           width: 42,
           height: 42,
           decoration: BoxDecoration(
-            color: const Color(0xFFE8F1EF),
+            color: AppColors.primaryLight,
             borderRadius: BorderRadius.circular(12),
           ),
           child: const Icon(Icons.receipt_long, color: AppColors.primary, size: 20),

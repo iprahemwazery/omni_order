@@ -5,7 +5,9 @@
 list(APPEND FLUTTER_PLUGIN_LIST
   app_links
   connectivity_plus
+  file_selector_windows
   flutter_secure_storage_windows
+  unified_esc_pos_printer
   url_launcher_windows
 )
 

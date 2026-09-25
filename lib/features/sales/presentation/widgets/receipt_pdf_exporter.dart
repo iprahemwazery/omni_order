@@ -18,7 +18,6 @@ class ReceiptPdfExporter {
     required Sale sale,
     required List<SaleItem> items,
     required StoreSettings settings,
-    String? customerName,
   }) async {
     final doc = await PdfExporter.newDocument();
 
@@ -29,7 +28,7 @@ class ReceiptPdfExporter {
         build: (context) => PdfExporter.rtl(
           pw.Padding(
             padding: const pw.EdgeInsets.all(4),
-            child: _buildContent(sale, items, settings, customerName),
+            child: _buildContent(sale, items, settings),
           ),
         ),
       ),
@@ -42,7 +41,6 @@ class ReceiptPdfExporter {
     Sale sale,
     List<SaleItem> items,
     StoreSettings settings,
-    String? customerName,
   ) {
     final subtotal = sale.total + sale.discount;
 
@@ -53,10 +51,7 @@ class ReceiptPdfExporter {
           child: pw.Text(
             settings.storeName,
             textAlign: pw.TextAlign.center,
-            style: pw.TextStyle(
-              fontSize: 22,
-              fontWeight: pw.FontWeight.bold,
-            ),
+            style: pw.TextStyle(fontSize: 22, fontWeight: pw.FontWeight.bold),
           ),
         ),
         if (settings.phone.isNotEmpty) ...[
@@ -71,10 +66,7 @@ class ReceiptPdfExporter {
         pw.SizedBox(height: 8),
         pw.Center(
           child: pw.Container(
-            padding: const pw.EdgeInsets.symmetric(
-              horizontal: 14,
-              vertical: 4,
-            ),
+            padding: const pw.EdgeInsets.symmetric(horizontal: 14, vertical: 4),
             decoration: pw.BoxDecoration(
               color: const PdfColor.fromInt(0xFFE8F1EF),
               borderRadius: pw.BorderRadius.all(pw.Radius.circular(16)),
@@ -95,12 +87,15 @@ class ReceiptPdfExporter {
         pw.Row(
           mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
           children: [
+            _InfoCell(label: 'رقم الفاتورة', value: '#${sale.id ?? 0}'),
             _InfoCell(
-              label: 'رقم الفاتورة',
-              value: '#${sale.id ?? 0}',
+              label: 'التاريخ',
+              value: AppFormatters.date(sale.createdAt),
             ),
-            _InfoCell(label: 'التاريخ', value: AppFormatters.date(sale.createdAt)),
-            _InfoCell(label: 'الوقت', value: AppFormatters.time(sale.createdAt)),
+            _InfoCell(
+              label: 'الوقت',
+              value: AppFormatters.time(sale.createdAt),
+            ),
           ],
         ),
         pw.SizedBox(height: 10),
@@ -108,8 +103,14 @@ class ReceiptPdfExporter {
           child: pw.Text(
             [
               'طريقة الدفع: ${sale.paymentMethod}',
-              if (customerName != null) 'العميل: $customerName',
+              'النوع: ${sale.orderType == 'صاله'
+                  ? 'صاله'
+                  : sale.orderType == 'دلفري'
+                  ? 'دلفري'
+                  : 'عميل عادي'}',
               if (sale.cashierName.isNotEmpty) 'الكاشير: ${sale.cashierName}',
+              if (sale.tableName.isNotEmpty) 'تريبية: ${sale.tableName}',
+              if (sale.customerName.isNotEmpty) 'المندوب: ${sale.customerName}',
             ].join('  •  '),
             textAlign: pw.TextAlign.center,
             style: pw.TextStyle(fontSize: 11, color: PdfColors.grey800),
@@ -158,7 +159,10 @@ class ReceiptPdfExporter {
         pw.SizedBox(height: 12),
         pw.Divider(color: PdfColors.grey300),
         pw.SizedBox(height: 10),
-        _TotalRow(label: 'الإجمالي', value: AppFormatters.money(subtotal, settings.currency)),
+        _TotalRow(
+          label: 'الإجمالي',
+          value: AppFormatters.money(subtotal, settings.currency),
+        ),
         if (sale.discount > 0) ...[
           pw.SizedBox(height: 6),
           _TotalRow(
@@ -222,10 +226,7 @@ class ReceiptPdfExporter {
           pw.SizedBox(height: 8),
           _TotalRow(
             label: 'المدفوع',
-            value: AppFormatters.money(
-              sale.amountTendered,
-              settings.currency,
-            ),
+            value: AppFormatters.money(sale.amountTendered, settings.currency),
           ),
           pw.SizedBox(height: 4),
           _TotalRow(
@@ -262,9 +263,7 @@ class ReceiptPdfExporter {
         if (sale.paymentMethod == PaymentMethod.deferred) ...[
           pw.SizedBox(height: 8),
           pw.Text(
-            customerName == null
-                ? 'تم تسجيل المبلغ كدين'
-                : 'تم تسجيل المبلغ دينًا على $customerName',
+            'دين',
             textAlign: pw.TextAlign.center,
             style: pw.TextStyle(
               fontSize: 11,
@@ -289,7 +288,7 @@ class ReceiptPdfExporter {
         ),
         pw.SizedBox(height: 4),
         pw.Text(
-          'نظام أومني أوردر لإدارة المحلات',
+          'Ocean Catch - نظام إدارة المطاعم',
           textAlign: pw.TextAlign.center,
           style: pw.TextStyle(fontSize: 9, color: PdfColors.grey500),
         ),

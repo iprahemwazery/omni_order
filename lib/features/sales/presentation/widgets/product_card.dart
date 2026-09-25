@@ -32,7 +32,9 @@ class ProductCard extends StatelessWidget {
           padding: const EdgeInsets.all(12),
           decoration: BoxDecoration(
             border: Border.all(
-              color: outOfStock ? const Color(0xFFF0D8D8) : AppColors.border,
+              color: outOfStock
+                  ? AppColors.error.withValues(alpha: 0.5)
+                  : AppColors.border,
             ),
             borderRadius: BorderRadius.circular(16),
           ),
@@ -47,12 +49,12 @@ class ProductCard extends StatelessWidget {
                     width: 40,
                     height: 40,
                     decoration: BoxDecoration(
-                      color: const Color(0xFFE8F1EF),
+                      color: AppColors.primary.withValues(alpha: 0.12),
                       borderRadius: BorderRadius.circular(12),
                     ),
                     child: const Icon(
                       Icons.inventory_2_outlined,
-                      color: AppColors.primary,
+                      color: AppColors.primaryLight,
                     ),
                   ),
                   _QuickAddButton(
@@ -62,12 +64,30 @@ class ProductCard extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: 10),
-              Text(
-                product.name,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
+              Flexible(
+                child: Text(
+                  product.name,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style:
+                      const TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
+                ),
               ),
+              if (product.description.trim().isNotEmpty) ...[
+                const SizedBox(height: 3),
+                Flexible(
+                  child: Text(
+                    product.description,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 11.5,
+                      color: AppColors.textSecondary,
+                      height: 1.3,
+                    ),
+                  ),
+                ),
+              ],
               const SizedBox(height: 4),
               Text(
                 AppFormatters.money(product.price),

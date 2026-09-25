@@ -4,6 +4,7 @@ import '../../../../core/utils/password_utils.dart';
 import '../../../../data/services/auth_service.dart';
 import '../../../../domain/models/admin.dart';
 import '../../../../domain/repositories/store_repository.dart';
+import '../domain/usecases/auth_usecases.dart';
 import 'auth_state.dart';
 
 /// يدير بوابة الترخيص وتسجيل الدخول المحلي (أدمن/كاشير) وإدارة المستخدمين.
@@ -14,12 +15,14 @@ import 'auth_state.dart';
 ///      (التفعيل نفسه يديره LicenseCubit ثم يُستدعى [onLicenseGranted]).
 ///   3. بعد ضمان الترخيص -> إعداد أول مرة أو تسجيل الدخول المحلي.
 class AuthCubit extends Cubit<AuthState> {
-  AuthCubit(this._repository, {AuthService? authService})
-      : _authService = authService ?? AuthService(),
-        super(const AuthState());
+  AuthCubit(this._repository, {AuthService? authService, LoginUseCase? login})
+    : _authService = authService ?? AuthService(),
+      _login = login,
+      super(const AuthState());
 
   final StoreRepository _repository;
   final AuthService _authService;
+  final LoginUseCase? _login;
 
   /// يتحقق عند فتح التطبيق: بوابة الترخيص أولاً، ثم حسب وجود المستخدمين
   /// المحليين (إعداد أول مرة أو شاشة تسجيل الدخول).
@@ -48,9 +51,7 @@ class AuthCubit extends Cubit<AuthState> {
       if (_authService.isReady) {
         final licenseError = await _authService.checkOfflineActivation();
         if (licenseError != null) {
-          emit(
-            const AuthState(status: AuthStatus.activation),
-          );
+          emit(const AuthState(status: AuthStatus.activation));
           return licenseError;
         }
       }
@@ -79,6 +80,13 @@ class AuthCubit extends Cubit<AuthState> {
     final trimmed = username.trim();
     if (trimmed.isEmpty) return 'اكتب اسم المستخدم.';
     if (password.isEmpty) return 'اكتب كلمة السر.';
+
+    if (_login != null) {
+      final admin = await _login(username: trimmed, password: password);
+      if (admin == null) return 'اسم المستخدم أو كلمة السر غير صحيحة.';
+      emit(AuthState(status: AuthStatus.authenticated, admin: admin));
+      return null;
+    }
 
     final admin = await _repository.getAdminByUsername(trimmed);
     if (admin == null || !PasswordUtils.verify(password, admin.passwordHash)) {
@@ -156,20 +164,20 @@ class AuthCubit extends Cubit<AuthState> {
       if (password != confirmPassword) return 'كلمتا السر غير متطابقتين.';
 
       final hash = PasswordUtils.hash(password);
-      final id = await _repository.addAdmin(Admin(
-        username: trimmed,
-        passwordHash: hash,
-        role: UserRole.superAdmin,
-      ));
-      emit(AuthState(
-        status: AuthStatus.authenticated,
-        admin: Admin(
-          id: id,
-          username: trimmed,
-          passwordHash: hash,
-          role: UserRole.superAdmin,
+      final id = await _repository.addAdmin(
+        Admin(username: trimmed, passwordHash: hash, role: UserRole.superAdmin),
+      );
+      emit(
+        AuthState(
+          status: AuthStatus.authenticated,
+          admin: Admin(
+            id: id,
+            username: trimmed,
+            passwordHash: hash,
+            role: UserRole.superAdmin,
+          ),
         ),
-      ));
+      );
       return null;
     }
 
@@ -190,8 +198,10 @@ class AuthCubit extends Cubit<AuthState> {
 
   /// يعيد الأدمن المحلي المقابل لهذا الاسم بالدور المختار، أو ينشئه
   /// تلقائيًا عند أول تحويل لدور لم يُسجَّل من قبل.
-  Future<Admin> _adminByUsername(String username,
-      {required UserRole role}) async {
+  Future<Admin> _adminByUsername(
+    String username, {
+    required UserRole role,
+  }) async {
     final existing = await _repository.getAdminByUsername(username);
     if (existing != null) {
       final updated = existing.copyWith(role: role);
@@ -203,11 +213,9 @@ class AuthCubit extends Cubit<AuthState> {
     final randomHash = PasswordUtils.hash(
       '$username-${DateTime.now().microsecondsSinceEpoch}',
     );
-    final id = await _repository.addAdmin(Admin(
-      username: username,
-      passwordHash: randomHash,
-      role: role,
-    ));
+    final id = await _repository.addAdmin(
+      Admin(username: username, passwordHash: randomHash, role: role),
+    );
     return Admin(
       id: id,
       username: username,
@@ -233,20 +241,24 @@ class AuthCubit extends Cubit<AuthState> {
     final error = _validateCredentials(username, password, confirmPassword);
     if (error != null) return error;
 
-    final id = await _repository.addAdmin(Admin(
-      username: username.trim(),
-      passwordHash: PasswordUtils.hash(password),
-      role: UserRole.superAdmin,
-    ));
-    emit(AuthState(
-      status: AuthStatus.authenticated,
-      admin: Admin(
-        id: id,
+    final id = await _repository.addAdmin(
+      Admin(
         username: username.trim(),
         passwordHash: PasswordUtils.hash(password),
         role: UserRole.superAdmin,
       ),
-    ));
+    );
+    emit(
+      AuthState(
+        status: AuthStatus.authenticated,
+        admin: Admin(
+          id: id,
+          username: username.trim(),
+          passwordHash: PasswordUtils.hash(password),
+          role: UserRole.superAdmin,
+        ),
+      ),
+    );
     return null;
   }
 
@@ -280,11 +292,13 @@ class AuthCubit extends Cubit<AuthState> {
     final existing = await _repository.getAdminByUsername(trimmed);
     if (existing != null) return 'اسم المستخدم موجود من قبل.';
 
-    await _repository.addAdmin(Admin(
-      username: trimmed,
-      passwordHash: PasswordUtils.hash(password),
-      role: role,
-    ));
+    await _repository.addAdmin(
+      Admin(
+        username: trimmed,
+        passwordHash: PasswordUtils.hash(password),
+        role: role,
+      ),
+    );
     await _loadUsers();
     return null;
   }
@@ -298,8 +312,9 @@ class AuthCubit extends Cubit<AuthState> {
     if (current.id == user.id) return 'لا يمكن تغيير دورك أنت.';
     if (role == UserRole.superAdmin) return 'لا يمكن تعيين أدمن أساسي من هنا.';
 
-    final superAdmins =
-        await _repository.getAdmins().then((a) => a.where((x) => x.isSuperAdmin).length);
+    final superAdmins = await _repository.getAdmins().then(
+      (a) => a.where((x) => x.isSuperAdmin).length,
+    );
     if (user.isSuperAdmin && superAdmins <= 1) {
       return 'لا يمكن تغيير دور آخر أدمن أساسي.';
     }
@@ -317,8 +332,9 @@ class AuthCubit extends Cubit<AuthState> {
     }
     if (user.id == current.id) return 'لا يمكنك حذف حسابك الحالي.';
 
-    final superAdmins =
-        await _repository.getAdmins().then((a) => a.where((x) => x.isSuperAdmin).length);
+    final superAdmins = await _repository.getAdmins().then(
+      (a) => a.where((x) => x.isSuperAdmin).length,
+    );
     if (user.isSuperAdmin && superAdmins <= 1) {
       return 'لا يمكن حذف آخر أدمن أساسي.';
     }
@@ -333,7 +349,9 @@ class AuthCubit extends Cubit<AuthState> {
     String password,
     String confirmPassword,
   ) {
-    if (username.trim().length < 3) return 'اسم المستخدم يجب أن يكون 3 أحرف على الأقل.';
+    if (username.trim().length < 3) {
+      return 'اسم المستخدم يجب أن يكون 3 أحرف على الأقل.';
+    }
     if (password.length < 4) return 'كلمة السر يجب أن تكون 4 رموز على الأقل.';
     if (password != confirmPassword) return 'كلمتا السر غير متطابقتين.';
     return null;

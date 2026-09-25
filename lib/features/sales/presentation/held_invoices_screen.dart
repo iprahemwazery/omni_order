@@ -7,7 +7,6 @@ import '../../../core/utils/formatters.dart';
 import '../../../domain/models/held_cart.dart';
 import '../../../domain/repositories/store_repository.dart';
 import '../../../shared/widgets/empty_state.dart';
-import '../../customers/presentation/customers_cubit.dart';
 import '../../settings/presentation/settings_cubit.dart';
 import 'cart_cubit.dart';
 
@@ -51,14 +50,6 @@ class _HeldInvoicesScreenState extends State<HeldInvoicesScreen> {
         _error = safeErrorMessage('تعذر تحميل الفواتير المعلقة', e);
       });
     }
-  }
-
-  String _customerName(int? customerId) {
-    final customer = customerId == null
-        ? null
-        : context.read<CustomersCubit>().state.customerById(customerId);
-    if (customer != null) return customer.name;
-    return customerId == null ? '' : 'عميل محذوف';
   }
 
   Future<void> _restore(HeldCart cart) async {
@@ -178,9 +169,6 @@ class _HeldInvoicesScreenState extends State<HeldInvoicesScreen> {
                         itemBuilder: (context, index) =>
                             _HeldCartTile(
                               cart: _carts[index],
-                              customerName: _customerName(
-                                _carts[index].customerId,
-                              ),
                               onRestore: () => _restore(_carts[index]),
                               onDelete: () => _delete(_carts[index]),
                             ),
@@ -193,13 +181,11 @@ class _HeldInvoicesScreenState extends State<HeldInvoicesScreen> {
 class _HeldCartTile extends StatelessWidget {
   const _HeldCartTile({
     required this.cart,
-    required this.customerName,
     required this.onRestore,
     required this.onDelete,
   });
 
   final HeldCart cart;
-  final String customerName;
   final VoidCallback onRestore;
   final VoidCallback onDelete;
 
@@ -248,7 +234,6 @@ class _HeldCartTile extends StatelessWidget {
                       [
                         '${cart.itemsCount} أصناف',
                         'طريقة الدفع: ${cart.paymentMethod}',
-                        if (customerName.isNotEmpty) 'العميل: $customerName',
                       ].join(' • '),
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,

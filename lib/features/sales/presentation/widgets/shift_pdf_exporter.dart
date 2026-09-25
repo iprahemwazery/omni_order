@@ -35,10 +35,7 @@ class ShiftPdfExporter {
     return doc.save();
   }
 
-  static pw.Widget _buildContent(
-    ShiftReport report,
-    StoreSettings settings,
-  ) {
+  static pw.Widget _buildContent(ShiftReport report, StoreSettings settings) {
     final currency = settings.currency;
     final shift = report.shift;
     return pw.Column(
@@ -48,10 +45,7 @@ class ShiftPdfExporter {
           child: pw.Text(
             settings.storeName,
             textAlign: pw.TextAlign.center,
-            style: pw.TextStyle(
-              fontSize: 22,
-              fontWeight: pw.FontWeight.bold,
-            ),
+            style: pw.TextStyle(fontSize: 22, fontWeight: pw.FontWeight.bold),
           ),
         ),
         if (settings.phone.isNotEmpty) ...[
@@ -66,10 +60,7 @@ class ShiftPdfExporter {
         pw.SizedBox(height: 8),
         pw.Center(
           child: pw.Container(
-            padding: const pw.EdgeInsets.symmetric(
-              horizontal: 14,
-              vertical: 4,
-            ),
+            padding: const pw.EdgeInsets.symmetric(horizontal: 14, vertical: 4),
             decoration: pw.BoxDecoration(
               color: const PdfColor.fromInt(0xFFE8F1EF),
               borderRadius: pw.BorderRadius.all(pw.Radius.circular(16)),
@@ -93,7 +84,8 @@ class ShiftPdfExporter {
             _InfoCell(label: 'الكاشير', value: shift.cashierName),
             _InfoCell(
               label: 'البداية',
-              value: '${AppFormatters.date(shift.openedAt)} '
+              value:
+                  '${AppFormatters.date(shift.openedAt)} '
                   '${AppFormatters.time(shift.openedAt)}',
             ),
             _InfoCell(
@@ -101,7 +93,7 @@ class ShiftPdfExporter {
               value: shift.isOpen
                   ? 'مفتوحة'
                   : '${AppFormatters.date(shift.closedAt!)} '
-                      '${AppFormatters.time(shift.closedAt!)}',
+                        '${AppFormatters.time(shift.closedAt!)}',
             ),
           ],
         ),
@@ -116,10 +108,7 @@ class ShiftPdfExporter {
               value: AppFormatters.money(report.totalSales, currency),
               color: PdfColors.teal800,
             ),
-            _TotalRow(
-              label: 'عدد الفواتير',
-              value: '${report.salesCount}',
-            ),
+            _TotalRow(label: 'عدد الفواتير', value: '${report.salesCount}'),
           ],
         ),
         pw.SizedBox(height: 14),
@@ -184,7 +173,7 @@ class ShiftPdfExporter {
         ),
         pw.SizedBox(height: 4),
         pw.Text(
-          'نظام أومني أوردر لإدارة المحلات',
+          'Ocean Catch - نظام إدارة المطاعم',
           textAlign: pw.TextAlign.center,
           style: pw.TextStyle(fontSize: 9, color: PdfColors.grey500),
         ),
@@ -218,10 +207,7 @@ class ShiftPdfExporter {
   }
 
   /// يحفظ التقرير في مجلد التنزيلات العام (يرجّع مكان الحفظ أو null).
-  static Future<String?> saveToDownloads(
-    Uint8List bytes,
-    String fileName,
-  ) {
+  static Future<String?> saveToDownloads(Uint8List bytes, String fileName) {
     return PdfExporter.saveToDownloads(bytes, fileName);
   }
 

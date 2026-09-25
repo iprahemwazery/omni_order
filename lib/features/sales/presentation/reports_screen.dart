@@ -5,12 +5,11 @@ import '../../../core/theme/app_colors.dart';
 import '../../../core/utils/formatters.dart';
 import '../../../domain/models/summaries.dart';
 import '../../../shared/widgets/empty_state.dart';
-import '../../customers/presentation/customers_cubit.dart';
+import '../../../shared/widgets/screen_header.dart';
 import '../../expenses/presentation/expenses_cubit.dart';
 import '../../products/presentation/products_cubit.dart';
 import '../../products/presentation/products_state.dart';
 import '../../settings/presentation/settings_cubit.dart';
-import '../../suppliers/presentation/supplier_reports_screen.dart';
 import 'daily_report_screen.dart';
 import 'sales_cubit.dart';
 import 'sales_state.dart';
@@ -30,6 +29,19 @@ class _ReportsScreenState extends State<ReportsScreen> {
   /// عند كل إعادة بناء عادية للشاشة.
   int _refreshTick = 0;
 
+  /// القسم المعروض حاليًا في منطقة المحتوى (الشريط الجانبي ثابت).
+  int _section = 0;
+
+  static const List<({String title, IconData icon})> _sections = [
+    (title: 'نظرة عامة', icon: Icons.dashboard_outlined),
+    (title: 'تحليل الربح', icon: Icons.trending_up),
+    (title: 'اتجاه المبيعات', icon: Icons.show_chart),
+    (title: 'الأعلى مبيعًا', icon: Icons.emoji_events_outlined),
+    (title: 'تنبيهات المخزون', icon: Icons.inventory_2_outlined),
+    (title: 'التقرير الضريبي', icon: Icons.receipt_long_outlined),
+    (title: 'الأيام السابقة', icon: Icons.calendar_month_outlined),
+  ];
+
   @override
   Widget build(BuildContext context) {
     return BlocBuilder<SalesCubit, SalesState>(
@@ -38,183 +50,194 @@ class _ReportsScreenState extends State<ReportsScreen> {
   }
 
   Widget _build(BuildContext context, SalesState sales) {
-    final st = sales.totals;
-
     return Scaffold(
-      appBar: AppBar(title: const Text('التقارير')),
-      body: SafeArea(
-        child: RefreshIndicator(
-          onRefresh: () async {
-            setState(() => _refreshTick++);
-            final salesCubit = context.read<SalesCubit>();
-            final productsCubit = context.read<ProductsCubit>();
-            final customersCubit = context.read<CustomersCubit>();
-            final expensesCubit = context.read<ExpensesCubit>();
-            await Future.wait([
-              salesCubit.init(),
-              productsCubit.init(),
-              customersCubit.init(),
-              expensesCubit.init(),
-            ]);
-          },
-          child: ListView(
-            padding: const EdgeInsets.all(16),
-            children: [
-              _NetProfitBanner(
-                todayRevenue: st.cashToday,
-                monthRevenue: st.cashMonth,
-                totalRevenue: st.totalCash,
+      body: Column(
+        children: [
+          ScreenHeader(
+            title: 'التقارير',
+            actions: [
+              IconButton(
+                tooltip: 'تحديث البيانات',
+                onPressed: () async {
+                  setState(() => _refreshTick++);
+                  final salesCubit = context.read<SalesCubit>();
+                  final productsCubit = context.read<ProductsCubit>();
+                  final expensesCubit = context.read<ExpensesCubit>();
+                  await Future.wait([
+                    salesCubit.init(),
+                    productsCubit.init(),
+                    expensesCubit.init(),
+                  ]);
+                },
+                icon: const Icon(Icons.refresh, size: 20),
               ),
-              const SizedBox(height: 16),
-              _StatGrid(
-                children: [
-                  _StatCard(
-                    stat: const _Stat(
-                      label: 'مبيعات اليوم',
-                      icon: Icons.today,
-                      color: AppColors.primary,
-                    ).withValue(st.cashToday),
-                  ),
-                  _StatCard(
-                    stat: const _Stat(
-                      label: 'مديونية اليوم',
-                      icon: Icons.account_balance_wallet_outlined,
-                      color: AppColors.error,
-                    ).withValue(st.deferredToday),
-                  ),
-                  const _ExpenseStatCard(
-                    label: 'مصروفات اليوم',
-                    icon: Icons.request_quote_outlined,
-                    color: AppColors.warning,
-                    amountOf: _todayExpenses,
-                  ),
-                  _NetStatCard(
-                    label: 'صافي اليوم',
-                    icon: Icons.trending_up,
-                    color: AppColors.success,
-                    salesAmount: st.cashToday,
-                    expensesOf: _todayExpenses,
-                  ),
-                  _StatCard(
-                    stat: const _Stat(
-                      label: 'مبيعات الشهر',
-                      icon: Icons.calendar_month,
-                      color: AppColors.success,
-                    ).withValue(st.cashMonth),
-                  ),
-                  const _ExpenseStatCard(
-                    label: 'مصروفات الشهر',
-                    icon: Icons.request_quote_outlined,
-                    color: AppColors.warning,
-                    amountOf: _monthExpenses,
-                  ),
-                  _StatCard(
-                    stat: const _Stat(
-                      label: 'إجمالي المبيعات',
-                      icon: Icons.savings_outlined,
-                      color: AppColors.primaryDark,
-                    ).withValue(st.totalCash),
-                  ),
-                  _StatCard(
-                    stat: const _Stat(
-                      label: 'إجمالي الآجل',
-                      icon: Icons.account_balance_wallet_outlined,
-                      color: AppColors.error,
-                    ).withValue(st.totalDeferred),
-                  ),
-                  const _ExpenseStatCard(
-                    label: 'إجمالي المصروفات',
-                    icon: Icons.request_quote_outlined,
-                    color: AppColors.warning,
-                    amountOf: _allExpenses,
-                  ),
-                  _NetStatCard(
-                    label: 'صافي الإجمالي',
-                    icon: Icons.account_balance_outlined,
-                    color: AppColors.primary,
-                    salesAmount: st.totalCash,
-                    expensesOf: _allExpenses,
-                  ),
-                  _StatCard(
-                    stat: _Stat(
-                      label: 'عدد الفواتير',
-                      value: '${st.countTotal}',
-                      icon: Icons.receipt_long_outlined,
-                      color: AppColors.accent,
-                    ),
-                  ),
-                  const _CustomerDebtStatCard(),
-                ],
-              ),
-              const SizedBox(height: 24),
-              Text(
-                'تحليل الربح',
-                style: Theme.of(context).textTheme.titleLarge,
-              ),
-              const SizedBox(height: 12),
-              _ProfitAnalytics(key: ValueKey('profit_$_refreshTick')),
-              const SizedBox(height: 24),
-              Text(
-                'اتجاه المبيعات',
-                style: Theme.of(context).textTheme.titleLarge,
-              ),
-              const SizedBox(height: 12),
-              _RevenueTrend(key: ValueKey('trend_$_refreshTick')),
-              const SizedBox(height: 24),
-              Text(
-                'الأعلى مبيعًا',
-                style: Theme.of(context).textTheme.titleLarge,
-              ),
-              const SizedBox(height: 12),
-              const _TopProducts(),
-              const SizedBox(height: 24),
-              Text(
-                'تنبيهات المخزون',
-                style: Theme.of(context).textTheme.titleLarge,
-              ),
-              const SizedBox(height: 12),
-              const _StockAlerts(),
-              const SizedBox(height: 24),
-              Container(
-                decoration: BoxDecoration(
-                  color: AppColors.surface,
-                  borderRadius: BorderRadius.circular(18),
-                  border: Border.all(color: AppColors.border),
-                ),
-                child: ListTile(
-                  leading: const Icon(
-                    Icons.local_shipping_outlined,
-                    color: AppColors.primary,
-                  ),
-                  title: const Text('تقرير الموردين'),
-                  subtitle: const Text(
-                    'فلترة حسب المورد والتاريخ وتصدير PDF/Excel',
-                  ),
-                  trailing: const Icon(Icons.chevron_left_rounded),
-                  onTap: () => Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder: (_) => const SupplierReportsScreen(),
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 24),
-              Text(
-                'الأيام السابقة',
-                style: Theme.of(context).textTheme.titleLarge,
-              ),
-              const SizedBox(height: 4),
-              const Text(
-                'اضغط على أي يوم لفتح تقريره كاملًا',
-                style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
-              ),
-              const SizedBox(height: 12),
-              _DayHistory(key: ValueKey('history_$_refreshTick')),
+              const SizedBox(width: 8),
             ],
           ),
-        ),
+          const Divider(height: 1),
+          Expanded(
+            child: SafeArea(
+              top: false,
+              // الهيدر والشريط الجانبي ثابتان — يتغير المحتوى فقط حسب القسم المختار.
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final isWide = constraints.maxWidth >= 1000;
+                  final content = Center(
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 1100),
+                      child: KeyedSubtree(
+                        key: ValueKey('section_$_section'),
+                        child: ListView(
+                          padding: const EdgeInsets.all(16),
+                          children: _sectionChildren(context, sales),
+                        ),
+                      ),
+                    ),
+                  );
+                  if (isWide) {
+                    return Row(
+                      textDirection: TextDirection.rtl,
+                      children: [
+                        _ReportsNav(
+                          sections: _sections,
+                          selected: _section,
+                          onSelect: (i) => setState(() => _section = i),
+                        ),
+                        Expanded(child: content),
+                      ],
+                    );
+                  }
+                  return Column(
+                    children: [
+                      _ReportsChips(
+                        sections: _sections,
+                        selected: _section,
+                        onSelect: (i) => setState(() => _section = i),
+                      ),
+                      Expanded(child: content),
+                    ],
+                  );
+                },
+              ),
+            ),
+          ),
+        ],
       ),
     );
+  }
+
+  List<Widget> _sectionChildren(BuildContext context, SalesState sales) {
+    final st = sales.totals;
+
+    switch (_section) {
+      case 1:
+        return [_ProfitAnalytics(key: ValueKey('profit_$_refreshTick'))];
+      case 2:
+        return [_RevenueTrend(key: ValueKey('trend_$_refreshTick'))];
+      case 3:
+        return [const _TopProducts()];
+      case 4:
+        return [const _StockAlerts()];
+      case 5:
+        return [const _TaxReport()];
+      case 6:
+        return [
+          _SectionHeader(
+            title: 'الأيام السابقة',
+            subtitle: 'اضغط على أي يوم لفتح تقريره كاملًا',
+          ),
+          const SizedBox(height: 12),
+          _DayHistory(key: ValueKey('history_$_refreshTick')),
+        ];
+      default:
+        return [
+          _NetProfitBanner(
+            todayRevenue: st.cashToday,
+            monthRevenue: st.cashMonth,
+            totalRevenue: st.totalCash,
+          ),
+          const SizedBox(height: 16),
+          _StatGrid(
+            children: [
+              _StatCard(
+                stat: const _Stat(
+                  label: 'مبيعات اليوم',
+                  icon: Icons.today,
+                  color: AppColors.primary,
+                ).withValue(st.cashToday),
+              ),
+              _StatCard(
+                stat: const _Stat(
+                  label: 'مديونية اليوم',
+                  icon: Icons.account_balance_wallet_outlined,
+                  color: AppColors.error,
+                ).withValue(st.deferredToday),
+              ),
+              const _ExpenseStatCard(
+                label: 'مصروفات اليوم',
+                icon: Icons.request_quote_outlined,
+                color: AppColors.warning,
+                amountOf: _todayExpenses,
+              ),
+              _NetStatCard(
+                label: 'صافي اليوم',
+                icon: Icons.trending_up,
+                color: AppColors.success,
+                salesAmount: st.cashToday,
+                expensesOf: _todayExpenses,
+              ),
+              _StatCard(
+                stat: const _Stat(
+                  label: 'مبيعات الشهر',
+                  icon: Icons.calendar_month,
+                  color: AppColors.success,
+                ).withValue(st.cashMonth),
+              ),
+              const _ExpenseStatCard(
+                label: 'مصروفات الشهر',
+                icon: Icons.request_quote_outlined,
+                color: AppColors.warning,
+                amountOf: _monthExpenses,
+              ),
+              _StatCard(
+                stat: const _Stat(
+                  label: 'إجمالي المبيعات',
+                  icon: Icons.savings_outlined,
+                  color: AppColors.primaryDark,
+                ).withValue(st.totalCash),
+              ),
+              _StatCard(
+                stat: const _Stat(
+                  label: 'إجمالي الآجل',
+                  icon: Icons.account_balance_wallet_outlined,
+                  color: AppColors.error,
+                ).withValue(st.totalDeferred),
+              ),
+              const _ExpenseStatCard(
+                label: 'إجمالي المصروفات',
+                icon: Icons.request_quote_outlined,
+                color: AppColors.warning,
+                amountOf: _allExpenses,
+              ),
+              _NetStatCard(
+                label: 'صافي الإجمالي',
+                icon: Icons.account_balance_outlined,
+                color: AppColors.primary,
+                salesAmount: st.totalCash,
+                expensesOf: _allExpenses,
+              ),
+              _StatCard(
+                stat: _Stat(
+                  label: 'عدد الفواتير',
+                  value: '${st.countTotal}',
+                  icon: Icons.receipt_long_outlined,
+                  color: AppColors.accent,
+                ),
+              ),
+            ],
+          ),
+        ];
+    }
   }
 }
 
@@ -222,6 +245,265 @@ class _ReportsScreenState extends State<ReportsScreen> {
 double _todayExpenses(ExpenseTotals totals) => totals.today;
 double _monthExpenses(ExpenseTotals totals) => totals.month;
 double _allExpenses(ExpenseTotals totals) => totals.total;
+
+/// ترويسة قسم داخل منطقة المحتوى (عنوان + وصف قصير).
+class _SectionHeader extends StatelessWidget {
+  const _SectionHeader({required this.title, this.subtitle});
+
+  final String title;
+  final String? subtitle;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          title,
+          style: const TextStyle(
+            fontSize: 17,
+            fontWeight: FontWeight.w800,
+            color: AppColors.textPrimary,
+          ),
+        ),
+        if (subtitle != null) ...[
+          const SizedBox(height: 4),
+          Text(
+            subtitle!,
+            style: const TextStyle(
+              color: AppColors.textSecondary,
+              fontSize: 12,
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+/// الشريط الجانبي الثابت لأقسام التقارير (وضع الكمبيوتر).
+class _ReportsNav extends StatelessWidget {
+  const _ReportsNav({
+    required this.sections,
+    required this.selected,
+    required this.onSelect,
+  });
+
+  final List<({String title, IconData icon})> sections;
+  final int selected;
+  final ValueChanged<int> onSelect;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 220,
+      color: AppColors.surface,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Padding(
+            padding: EdgeInsets.fromLTRB(16, 16, 16, 8),
+            child: Text(
+              'أقسام التقارير',
+              style: TextStyle(
+                color: AppColors.textSecondary,
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+          Expanded(
+            child: ListView(
+              padding: const EdgeInsets.fromLTRB(8, 0, 8, 16),
+              children: [
+                for (var i = 0; i < sections.length; i++)
+                  _NavTile(
+                    icon: sections[i].icon,
+                    title: sections[i].title,
+                    selected: i == selected,
+                    onTap: () => onSelect(i),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _NavTile extends StatelessWidget {
+  const _NavTile({
+    required this.icon,
+    required this.title,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String title;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final bg = selected
+        ? AppColors.primary.withValues(alpha: 0.14)
+        : Colors.transparent;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Material(
+        color: bg,
+        borderRadius: BorderRadius.circular(10),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(10),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(
+                color: selected
+                    ? AppColors.primary.withValues(alpha: 0.35)
+                    : Colors.transparent,
+              ),
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  icon,
+                  size: 18,
+                  color: selected
+                      ? AppColors.primaryLight
+                      : AppColors.textSecondary,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    title,
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
+                      color: selected
+                          ? AppColors.primaryLight
+                          : AppColors.textPrimary,
+                    ),
+                  ),
+                ),
+                if (selected)
+                  Container(
+                    width: 6,
+                    height: 6,
+                    decoration: const BoxDecoration(
+                      color: AppColors.primaryLight,
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// شرائح الأقسام للشاشات الضيقة (موبايل) — كلها ظاهرة بدون فتح صفحة جديدة.
+class _ReportsChips extends StatelessWidget {
+  const _ReportsChips({
+    required this.sections,
+    required this.selected,
+    required this.onSelect,
+  });
+
+  final List<({String title, IconData icon})> sections;
+  final int selected;
+  final ValueChanged<int> onSelect;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+      color: AppColors.surface,
+      child: Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        children: [
+          for (var i = 0; i < sections.length; i++)
+            _Chip(
+              icon: sections[i].icon,
+              title: sections[i].title,
+              selected: i == selected,
+              onTap: () => onSelect(i),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _Chip extends StatelessWidget {
+  const _Chip({
+    required this.icon,
+    required this.title,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String title;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: selected
+          ? AppColors.primary.withValues(alpha: 0.16)
+          : AppColors.background,
+      borderRadius: BorderRadius.circular(20),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(20),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(
+              color: selected
+                  ? AppColors.primary.withValues(alpha: 0.45)
+                  : AppColors.border,
+            ),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                icon,
+                size: 14,
+                color: selected
+                    ? AppColors.primaryLight
+                    : AppColors.textSecondary,
+              ),
+              const SizedBox(width: 6),
+              Text(
+                title,
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
+                  color: selected
+                      ? AppColors.primaryLight
+                      : AppColors.textSecondary,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
 
 class _Stat {
   const _Stat({
@@ -238,11 +520,11 @@ class _Stat {
 
   /// ينشئ نسخة بقيمة منسقة (تُستخدم لبناء البطاقة مع قيمة رقمية).
   _Stat withValue(double value) => _Stat(
-        label: label,
-        value: AppFormatters.money(value),
-        icon: icon,
-        color: color,
-      );
+    label: label,
+    value: AppFormatters.money(value),
+    icon: icon,
+    color: color,
+  );
 }
 
 /// ملخص صافي الربح (المبيعات ناقص المصروفات) لليوم والشهر والإجمالي.
@@ -259,8 +541,9 @@ class _NetProfitBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final et =
-        context.select<ExpensesCubit, ExpenseTotals>((c) => c.state.totals);
+    final et = context.select<ExpensesCubit, ExpenseTotals>(
+      (c) => c.state.totals,
+    );
     final currency = context.select<SettingsCubit, String>(
       (c) => c.state.settings.currency,
     );
@@ -270,16 +553,16 @@ class _NetProfitBanner extends StatelessWidget {
     final totalNet = totalRevenue - totalExpenses;
     final profit = totalNet >= 0;
     return Container(
-      padding: const EdgeInsets.all(18),
+      padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         gradient: LinearGradient(
           colors: profit
               ? const [AppColors.primary, AppColors.primaryDark]
-              : const [AppColors.error, Color(0xFF8A2B2B)],
+              : const [AppColors.error, Color(0xFF7A282C)],
           begin: Alignment.topRight,
           end: Alignment.bottomLeft,
         ),
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(14),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -289,25 +572,25 @@ class _NetProfitBanner extends StatelessWidget {
               const Icon(
                 Icons.pie_chart_outline,
                 color: Colors.white70,
-                size: 20,
+                size: 17,
               ),
-              const SizedBox(width: 8),
+              const SizedBox(width: 7),
               Text(
                 profit ? 'صافي الربح' : 'صافي الخسارة',
-                style: const TextStyle(color: Colors.white70, fontSize: 14),
+                style: const TextStyle(color: Colors.white70, fontSize: 12),
               ),
             ],
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 6),
           Text(
             AppFormatters.money(totalNet.abs(), currency),
             style: const TextStyle(
               color: Colors.white,
-              fontSize: 30,
+              fontSize: 24,
               fontWeight: FontWeight.w800,
             ),
           ),
-          const SizedBox(height: 14),
+          const SizedBox(height: 10),
           Wrap(
             spacing: 16,
             runSpacing: 6,
@@ -374,17 +657,24 @@ class _StatGrid extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GridView.builder(
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 2,
-        childAspectRatio: 1.6,
-        crossAxisSpacing: 12,
-        mainAxisSpacing: 12,
-      ),
-      itemCount: children.length,
-      itemBuilder: (context, index) => children[index],
+    // أعمدة أكثر على الشاشات العريضة + خلايا أقصر = مربعات أصغر وأنسب للكمبيوتر.
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final w = constraints.maxWidth;
+        final columns = w >= 900 ? 4 : (w >= 560 ? 3 : 2);
+        return GridView.builder(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: columns,
+            childAspectRatio: columns == 2 ? 1.8 : (columns == 3 ? 2.1 : 2.4),
+            crossAxisSpacing: 10,
+            mainAxisSpacing: 10,
+          ),
+          itemCount: children.length,
+          itemBuilder: (context, index) => children[index],
+        );
+      },
     );
   }
 }
@@ -398,10 +688,10 @@ class _StatCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(14),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
         color: AppColors.surface,
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(12),
         border: Border.all(color: AppColors.border),
       ),
       child: Column(
@@ -410,8 +700,8 @@ class _StatCard extends StatelessWidget {
         children: [
           Row(
             children: [
-              Icon(stat.icon, size: 20, color: stat.color),
-              const SizedBox(width: 8),
+              Icon(stat.icon, size: 16, color: stat.color),
+              const SizedBox(width: 6),
               Flexible(
                 child: Text(
                   stat.label,
@@ -419,7 +709,7 @@ class _StatCard extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
                     color: AppColors.textSecondary,
-                    fontSize: 12,
+                    fontSize: 11,
                   ),
                 ),
               ),
@@ -430,7 +720,7 @@ class _StatCard extends StatelessWidget {
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
-              fontSize: 17,
+              fontSize: 15,
               fontWeight: FontWeight.w800,
               color: stat.color,
             ),
@@ -458,8 +748,9 @@ class _ExpenseStatCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final totals =
-        context.select<ExpensesCubit, ExpenseTotals>((c) => c.state.totals);
+    final totals = context.select<ExpensesCubit, ExpenseTotals>(
+      (c) => c.state.totals,
+    );
     return _StatCard(
       stat: _Stat(
         label: label,
@@ -489,34 +780,15 @@ class _NetStatCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final totals =
-        context.select<ExpensesCubit, ExpenseTotals>((c) => c.state.totals);
+    final totals = context.select<ExpensesCubit, ExpenseTotals>(
+      (c) => c.state.totals,
+    );
     return _StatCard(
       stat: _Stat(
         label: label,
         value: AppFormatters.money(salesAmount - expensesOf(totals)),
         icon: icon,
         color: color,
-      ),
-    );
-  }
-}
-
-/// بطاقة ديون العملاء (تتابع حالة العملاء وحدها).
-class _CustomerDebtStatCard extends StatelessWidget {
-  const _CustomerDebtStatCard();
-
-  @override
-  Widget build(BuildContext context) {
-    final totalDebts = context.select<CustomersCubit, double>(
-      (c) => c.state.totalDebts,
-    );
-    return _StatCard(
-      stat: _Stat(
-        label: 'ديون العملاء',
-        value: AppFormatters.money(totalDebts),
-        icon: Icons.account_balance_wallet_outlined,
-        color: totalDebts > 0 ? AppColors.error : AppColors.success,
       ),
     );
   }
@@ -636,6 +908,141 @@ class _ProfitRow extends StatelessWidget {
   }
 }
 
+class _TaxReport extends StatelessWidget {
+  const _TaxReport();
+
+  @override
+  Widget build(BuildContext context) {
+    return BlocBuilder<SalesCubit, SalesState>(
+      builder: (context, sales) {
+        final allSales = sales.sales;
+        final taxRate = context.read<SettingsCubit>().state.settings.taxRate;
+
+        double totalTax = 0;
+        double totalSalesWithTax = 0;
+        double totalSalesWithoutTax = 0;
+        int salesWithTax = 0;
+
+        for (final sale in allSales) {
+          if (sale.taxAmount > 0) {
+            totalTax += sale.taxAmount;
+            totalSalesWithTax += sale.total;
+            salesWithTax++;
+          } else {
+            totalSalesWithoutTax += sale.total;
+          }
+        }
+
+        return Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: AppColors.primary.withValues(alpha: 0.04),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: AppColors.primary.withValues(alpha: 0.15),
+            ),
+          ),
+          child: Column(
+            children: [
+              Row(
+                children: [
+                  Icon(Icons.receipt_long, color: AppColors.primary, size: 20),
+                  const SizedBox(width: 8),
+                  Text(
+                    'ملخص ضريبي — نسبة: ${AppFormatters.percent(taxRate)}',
+                    style: const TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              _taxRow('إجمالي المبيعات شاملة الضريبة', totalSalesWithTax),
+              _taxRow(
+                'عدد الفواتير الضريبية',
+                salesWithTax.toDouble(),
+                isCount: true,
+              ),
+              _taxRow(
+                'قيمة الضريبة المحصلة',
+                totalTax,
+                highlight: AppColors.primary,
+              ),
+              _taxRow('المبيعات غير الخاضعة للضريبة', totalSalesWithoutTax),
+              const Divider(height: 20),
+              _taxRow(
+                'إجمالي الضريبة المستحقة للحكومة',
+                totalTax,
+                highlight: AppColors.success,
+              ),
+              const SizedBox(height: 8),
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: AppColors.warning.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(
+                      Icons.info_outline,
+                      size: 16,
+                      color: AppColors.warning,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'يجب تقديم هذا المبلغ للهيئة الزكاة والضريبة',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: AppColors.textSecondary.withValues(alpha: 0.8),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _taxRow(
+    String label,
+    double value, {
+    Color? highlight,
+    bool isCount = false,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Expanded(
+            child: Text(
+              label,
+              style: const TextStyle(
+                fontSize: 13,
+                color: AppColors.textSecondary,
+              ),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Text(
+            isCount ? '${value.toInt()}' : AppFormatters.money(value),
+            style: TextStyle(
+              fontWeight: FontWeight.w700,
+              fontSize: 14,
+              color: highlight ?? AppColors.textPrimary,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 /// اتجاه المبيعات النقدية على آخر 30 يومًا — إجماليات يومية من قاعدة البيانات.
 class _RevenueTrend extends StatefulWidget {
   const _RevenueTrend({super.key});
@@ -675,12 +1082,19 @@ class _RevenueTrendState extends State<_RevenueTrend> {
         ];
         final values = [
           for (final day in days)
-            totalsByDay[
-                    DateTime(day.year, day.month, day.day).toIso8601String()]
-                ?.cash ??
+            totalsByDay[DateTime(
+                      day.year,
+                      day.month,
+                      day.day,
+                    ).toIso8601String()]
+                    ?.cash ??
                 0,
         ];
-        return RevenueTrendChart(values: values, days: days, currency: currency);
+        return RevenueTrendChart(
+          values: values,
+          days: days,
+          currency: currency,
+        );
       },
     );
   }
@@ -758,7 +1172,7 @@ class _TopProductRow extends StatelessWidget {
             height: 28,
             alignment: Alignment.center,
             decoration: const BoxDecoration(
-              color: Color(0xFFE8F1EF),
+              color: AppColors.primaryLight,
               shape: BoxShape.circle,
             ),
             child: Text(
@@ -814,8 +1228,9 @@ class _StockAlerts extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final products =
-        context.select<ProductsCubit, ProductsState>((c) => c.state);
+    final products = context.select<ProductsCubit, ProductsState>(
+      (c) => c.state,
+    );
     final low = products.lowStock;
     final out = products.outOfStock;
 
@@ -985,10 +1400,11 @@ class _MonthCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final monthRevenue =
-        days.fold<double>(0, (sum, d) => sum + d.salesTotal);
-    final monthExpenses =
-        days.fold<double>(0, (sum, d) => sum + d.expensesTotal);
+    final monthRevenue = days.fold<double>(0, (sum, d) => sum + d.salesTotal);
+    final monthExpenses = days.fold<double>(
+      0,
+      (sum, d) => sum + d.expensesTotal,
+    );
 
     return Card(
       margin: EdgeInsets.zero,
@@ -998,7 +1414,7 @@ class _MonthCard extends StatelessWidget {
           Container(
             width: double.infinity,
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            color: const Color(0xFFE8F1EF),
+            color: AppColors.primaryLight,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -1108,7 +1524,7 @@ class _DayRow extends StatelessWidget {
                 height: 40,
                 alignment: Alignment.center,
                 decoration: BoxDecoration(
-                  color: const Color(0xFFE8F1EF),
+                  color: AppColors.primaryLight,
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: Column(

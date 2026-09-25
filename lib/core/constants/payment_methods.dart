@@ -24,4 +24,7 @@ abstract final class PaymentMethod {
 
   /// طرق الدفع التي تُسدَّد فورًا (تُستخدم لإظهار حقل "المبلغ المدفوع").
   static const Set<String> paidNow = {cash, card, wallet, bankTransfer};
+
+  /// طرق الدفع المتاحة لسداد فاتورة آجلة.
+  static const List<String> settleMethods = [cash, card, wallet, bankTransfer];
 }

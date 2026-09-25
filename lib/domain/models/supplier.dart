@@ -1,4 +1,4 @@
-/// مورد يورّد البضاعة إلى المتجر.
+/// مورد يزود المنتجات للمطعم.
 class Supplier {
   final int? id;
   final String name;
@@ -35,13 +35,13 @@ class Supplier {
   }
 
   Map<String, Object?> toMap() => {
-    if (id != null) 'id': id,
-    'name': name,
-    'phone': phone,
-    'address': address,
-    'balance': balance,
-    'created_at': createdAt.toIso8601String(),
-  };
+        if (id != null) 'id': id,
+        'name': name,
+        'phone': phone,
+        'address': address,
+        'balance': balance,
+        'created_at': createdAt.toIso8601String(),
+      };
 
   factory Supplier.fromMap(Map<String, Object?> map) {
     return Supplier(

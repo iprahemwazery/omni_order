@@ -1,8 +1,10 @@
 /// أدوار المستخدمين في النظام.
 enum UserRole {
   superAdmin('أدمن أساسي'),
-  admin('أدمن'),
-  cashier('كاشير');
+  admin('مدير'),
+  cashier('كاشير'),
+  waiter('جرسون'),
+  chef('شيف');
 
   const UserRole(this.label);
 
@@ -21,11 +23,14 @@ enum UserPermission {
   makeSales('البيع'),
   viewSales('سجل المبيعات'),
   viewReports('التقارير'),
-  manageProducts('الأصناف والتصنيفات'),
-  manageCustomers('العملاء والمديونيات'),
+  manageProducts('المنيو والأصناف'),
   manageExpenses('المصروفات'),
-  manageSettings('إعدادات المتجر'),
-  manageUsers('إدارة المستخدمين');
+  manageSettings('الإعدادات'),
+  manageUsers('إدارة المستخدمين'),
+  manageHalls('إدارة الصالات'),
+  manageTables('إدارة الترابيزات'),
+  manageEmployees('إدارة الموظفين'),
+  manageOrders('إدارة الطلبات');
 
   const UserPermission(this.label);
 
@@ -42,7 +47,15 @@ extension UserRolePermissions on UserRole {
         return permission != UserPermission.manageUsers;
       case UserRole.cashier:
         return permission == UserPermission.makeSales ||
-            permission == UserPermission.viewSales;
+            permission == UserPermission.viewSales ||
+            permission == UserPermission.manageOrders;
+      case UserRole.waiter:
+        return permission == UserPermission.makeSales ||
+            permission == UserPermission.viewSales ||
+            permission == UserPermission.manageOrders ||
+            permission == UserPermission.manageTables;
+      case UserRole.chef:
+        return permission == UserPermission.viewSales;
     }
   }
 }

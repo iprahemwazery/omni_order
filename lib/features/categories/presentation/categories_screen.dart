@@ -77,7 +77,7 @@ class _CategoryTile extends StatelessWidget {
           width: 46,
           height: 46,
           decoration: BoxDecoration(
-            color: const Color(0xFFE8F1EF),
+            color: AppColors.primaryLight,
             borderRadius: BorderRadius.circular(14),
           ),
           child: const Icon(Icons.category, color: AppColors.primary),

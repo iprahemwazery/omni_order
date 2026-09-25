@@ -83,7 +83,7 @@ class _SetupScreenState extends State<SetupScreen> {
                           gradient: const LinearGradient(
                             begin: Alignment.topLeft,
                             end: Alignment.bottomRight,
-                            colors: [Colors.white, Color(0xFFE3F2EF)],
+                            colors: [Colors.white, Color(0xFFDFF5EA)],
                           ),
                           borderRadius: BorderRadius.circular(28),
                           boxShadow: [

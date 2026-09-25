@@ -1,6 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:omni_order/domain/models/product.dart';
-import 'package:omni_order/features/customers/presentation/customers_cubit.dart';
 import 'package:omni_order/features/products/presentation/products_cubit.dart';
 import 'package:omni_order/features/sales/presentation/cart_cubit.dart';
 import 'package:omni_order/features/sales/presentation/sales_cubit.dart';
@@ -17,12 +16,10 @@ void main() {
     );
 
     final products = ProductsCubit(repository)..init();
-    final customers = CustomersCubit(repository)..init();
     final sales = SalesCubit(repository)..init();
     final cart = CartCubit(
       repository: repository,
       productsCubit: products,
-      customersCubit: customers,
       salesCubit: sales,
     );
 
@@ -47,12 +44,10 @@ void main() {
     await repository.addProduct(Product(name: 'ماء', price: 10, stock: 5));
 
     final products = ProductsCubit(repository)..init();
-    final customers = CustomersCubit(repository)..init();
     final sales = SalesCubit(repository)..init();
     final cart = CartCubit(
       repository: repository,
       productsCubit: products,
-      customersCubit: customers,
       salesCubit: sales,
     );
 

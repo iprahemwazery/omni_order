@@ -1,4 +1,4 @@
-/// فاتورة شراء/توريد (مشتريات) — تسجيل البضاعة القادمة للمخزون.
+/// فاتورة شراء من مورد.
 class Purchase {
   final int? id;
   final int? supplierId;
@@ -17,6 +17,9 @@ class Purchase {
     this.note = '',
     DateTime? createdAt,
   }) : createdAt = createdAt ?? DateTime.now();
+
+  double get remaining => total - paidAmount;
+  bool get isFullyPaid => paidAmount >= total;
 
   Purchase copyWith({
     int? id,
@@ -39,19 +42,14 @@ class Purchase {
   }
 
   Map<String, Object?> toMap() => {
-    if (id != null) 'id': id,
-    if (supplierId != null) 'supplier_id': supplierId,
-    'supplier_name': supplierName,
-    'total': total,
-    'paid_amount': paidAmount,
-    if (note.isNotEmpty) 'note': note,
-    'created_at': createdAt.toIso8601String(),
-  };
-
-  double get remainingBalance =>
-      (total - paidAmount).clamp(0.0, double.infinity);
-
-  bool get isFullyPaid => remainingBalance <= 0;
+        if (id != null) 'id': id,
+        if (supplierId != null) 'supplier_id': supplierId,
+        'supplier_name': supplierName,
+        'total': total,
+        'paid_amount': paidAmount,
+        if (note.isNotEmpty) 'note': note,
+        'created_at': createdAt.toIso8601String(),
+      };
 
   factory Purchase.fromMap(Map<String, Object?> map) {
     return Purchase(

@@ -6,26 +6,29 @@ import 'package:path_provider/path_provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../core/config/supabase_config.dart';
+import '../../core/errors/failures.dart';
 import '../database/app_database.dart';
 
 /// خدمة بسيطة للنسخ الاحتياطي واستعادة قاعدة البيانات المحلية،
 /// مع التصدير إلى التنزيلات العامة والمزامنة السحابية عبر Supabase Storage.
+///
+/// تُرمى [AppException] برسالة عربية مقصودة للمستخدم عند فشل متوقع.
 class BackupService {
-  BackupService._();
+  BackupService();
 
   static const String _cloudBucket = 'omni_order_backups';
   static const String _cloudFolder = 'backups';
-  static bool _mediaStoreInitialized = false;
+  bool _mediaStoreInitialized = false;
 
-  static Future<String> createBackup() async {
+  Future<String> createBackup() async {
     final dbPath = AppDatabase.instance.path;
     if (dbPath == null || dbPath.isEmpty) {
-      throw StateError('لم يتم فتح قاعدة البيانات بعد.');
+      throw const AppException('لم يتم فتح قاعدة البيانات بعد.');
     }
 
     final dbFile = File(dbPath);
     if (!await dbFile.exists()) {
-      throw StateError('ملف قاعدة البيانات غير موجود.');
+      throw const AppException('ملف قاعدة البيانات غير موجود.');
     }
 
     final backupDir = dbFile.parent;
@@ -40,7 +43,7 @@ class BackupService {
     return backupPath;
   }
 
-  static Future<bool> restoreLatestBackup() async {
+  Future<bool> restoreLatestBackup() async {
     final dbPath = AppDatabase.instance.path;
     if (dbPath == null || dbPath.isEmpty) {
       return false;
@@ -66,7 +69,7 @@ class BackupService {
 
   /// ينشئ نسخة احتياطية ويحفظها في مجلد التنزيلات العام حتى يصل إليها المستخدم
   /// بسهولة. يعيد وصف مكان الحفظ عند النجاح أو null عند الفشل.
-  static Future<String?> createBackupInDownloads() async {
+  Future<String?> createBackupInDownloads() async {
     final backupPath = await createBackup();
 
     if (!Platform.isAndroid) {
@@ -94,7 +97,7 @@ class BackupService {
   }
 
   /// يرفع نسخة احتياطية إلى Supabase Storage ويعيد اسم الملف المرفوع.
-  static Future<String> uploadBackupToCloud() async {
+  Future<String> uploadBackupToCloud() async {
     _ensureSupabase();
     final backupPath = await createBackup();
     final fileName = '$_cloudFolder/omni_order_${DateTime.now().millisecondsSinceEpoch}.db';
@@ -108,12 +111,12 @@ class BackupService {
 
   /// يسحب أحدث نسخة احتياطية من السحابة ويستعيدها محليًا.
   /// يعيد عدد النسخ السحابية المتاحة قبل الاستعادة.
-  static Future<int> downloadLatestFromCloud() async {
+  Future<int> downloadLatestFromCloud() async {
     _ensureSupabase();
     final storage = Supabase.instance.client.storage;
     final files = await storage.from(_cloudBucket).list(path: _cloudFolder);
     if (files.isEmpty) {
-      throw StateError('لا توجد نسخ احتياطية في السحابة بعد.');
+      throw const AppException('لا توجد نسخ احتياطية في السحابة بعد.');
     }
 
     final latest = files
@@ -121,12 +124,12 @@ class BackupService {
         .toList()
       ..sort((a, b) => b.name.compareTo(a.name));
     if (latest.isEmpty) {
-      throw StateError('لا توجد نسخ احتياطية في السحابة بعد.');
+      throw const AppException('لا توجد نسخ احتياطية في السحابة بعد.');
     }
 
     final dbPath = AppDatabase.instance.path;
     if (dbPath == null || dbPath.isEmpty) {
-      throw StateError('لم يتم فتح قاعدة البيانات بعد.');
+      throw const AppException('لم يتم فتح قاعدة البيانات بعد.');
     }
 
     final tempDir = await getTemporaryDirectory();
@@ -142,9 +145,9 @@ class BackupService {
     return files.length;
   }
 
-  static void _ensureSupabase() {
+  void _ensureSupabase() {
     if (!SupabaseConfig.isConfigured || !Supabase.instance.isInitialized) {
-      throw StateError(
+      throw const AppException(
         'Supabase غير مُهيّأ. أضف بيانات مشروعك في supabase_config.dart أولًا.',
       );
     }

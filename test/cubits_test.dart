@@ -1,7 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:omni_order/domain/models/customer.dart';
 import 'package:omni_order/domain/models/product.dart';
-import 'package:omni_order/features/customers/presentation/customers_cubit.dart';
 import 'package:omni_order/features/products/presentation/products_cubit.dart';
 import 'package:omni_order/features/sales/presentation/cart_cubit.dart';
 import 'package:omni_order/features/sales/presentation/sales_cubit.dart';
@@ -47,23 +45,19 @@ void main() {
   group('CartCubit - السلة والبيع', () {
     late FakeStoreRepository repository;
     late ProductsCubit products;
-    late CustomersCubit customers;
     late SalesCubit sales;
     late CartCubit cart;
 
     setUp(() async {
       repository = FakeStoreRepository();
       products = ProductsCubit(repository);
-      customers = CustomersCubit(repository);
       sales = SalesCubit(repository);
       cart = CartCubit(
         repository: repository,
         productsCubit: products,
-        customersCubit: customers,
         salesCubit: sales,
       );
       await products.init();
-      await customers.init();
       await sales.init();
     });
 
@@ -133,26 +127,5 @@ void main() {
       expect(error, isNotNull);
     });
 
-    test('البيع الآجل يحدّث مديونية العميل', () async {
-      await products.addProduct(name: 'شاي', price: 10, stock: 20, unit: 'قطعة');
-      final product = products.state.products.first;
-      final customerId = await repository.addCustomer(
-        Customer(name: 'أحمد', phone: '012'),
-      );
-      await customers.refresh();
-
-      cart.addToCart(product, 1);
-      cart.selectCustomer(customers.state.customerById(customerId));
-      cart.setPaymentMethod('آجل');
-      final sale = await cart.completeSale();
-
-      expect(sale, isNotNull);
-      expect(repository.customers.first.balance, 10);
-
-      // البيع الآجل مديونية وليس ربحًا محققًا.
-      expect(sales.state.totalCashRevenue, 0);
-      expect(sales.state.totalDeferred, 10);
-      expect(sales.state.totalRevenue, 10);
-    });
   });
 }

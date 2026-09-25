@@ -2,15 +2,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../core/theme/app_colors.dart';
-import '../../../core/utils/error_utils.dart';
-import '../../../data/services/backup_service.dart';
 import '../../../domain/models/admin.dart';
 import '../../auth/presentation/admin_login_dialog.dart';
 import '../../auth/presentation/auth_cubit.dart';
 import '../../auth/presentation/users_screen.dart';
+import 'backup_cubit.dart';
+import 'printer_settings_screen.dart';
 import 'settings_cubit.dart';
 
-/// نافذة إعدادات المتجر (اسم المتجر، الهاتف، العملة) + إدارة المستخدمين.
+/// نافذة إعدادات المطعم (اسم المطعم، الهاتف، العملة) + إدارة المستخدمين.
 Future<void> showSettingsSheet(BuildContext context) {
   return showModalBottomSheet<void>(
     context: context,
@@ -123,22 +123,30 @@ class _SettingsSheetState extends State<_SettingsSheet> {
     ).push(MaterialPageRoute(builder: (_) => const UsersScreen()));
   }
 
-  Future<void> _createBackup() async {
-    try {
-      final path = await BackupService.createBackup();
-      if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('تم إنشاء نسخة احتياطية: $path')));
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(safeErrorMessage('تعذر إنشاء النسخة الاحتياطية', e))),
-      );
-    }
+  void _openPrinterSettings() {
+    Navigator.of(
+      context,
+    ).push(MaterialPageRoute(builder: (_) => const PrinterSettingsScreen()));
   }
 
+  /// ينفذ عملية نسخ احتياطي عبر [BackupCubit] ويعرض النتيجة،
+  /// مع منع تكرار التنفيذ أثناء انشغال عملية سابقة.
+  Future<void> _runBackup(Future<BackupOutcome> Function() action) async {
+    final cubit = context.read<BackupCubit>();
+    if (cubit.state.isBusy) return;
+    final outcome = await action();
+    if (!mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(outcome.message)));
+    if (outcome.popsSheet) Navigator.of(context).pop();
+  }
+
+  Future<void> _createBackup() =>
+      _runBackup(context.read<BackupCubit>().createLocalBackup);
+
   Future<void> _restoreBackup() async {
+    final cubit = context.read<BackupCubit>();
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -160,51 +168,11 @@ class _SettingsSheetState extends State<_SettingsSheet> {
     );
 
     if (confirmed != true) return;
-
-    try {
-      final restored = await BackupService.restoreLatestBackup();
-      if (!mounted) return;
-      if (restored) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('تمت استعادة النسخة الاحتياطية بنجاح.')),
-        );
-        Navigator.of(context).pop();
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('لا توجد نسخ احتياطية متاحة.')),
-        );
-      }
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(
-          content: Text(safeErrorMessage('تعذرت الاستعادة', e))));
-    }
+    await _runBackup(cubit.restoreLatestBackup);
   }
 
-  Future<void> _exportBackupToDownloads() async {
-    try {
-      final location = await BackupService.createBackupInDownloads();
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            location == null
-                ? 'تعذر تصدير النسخة الاحتياطية.'
-                : 'تم تصدير نسخة احتياطية إلى $location.',
-          ),
-        ),
-      );
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-            content: Text(
-                safeErrorMessage('تعذر تصدير النسخة الاحتياطية', e))),
-      );
-    }
-  }
+  Future<void> _exportBackupToDownloads() =>
+      _runBackup(context.read<BackupCubit>().exportToDownloads);
 
   Future<void> _cloudSync() async {
     final action = await showDialog<String>(
@@ -232,29 +200,10 @@ class _SettingsSheetState extends State<_SettingsSheet> {
     );
     if (action == null || !mounted) return;
 
-    try {
-      if (action == 'upload') {
-        final name = await BackupService.uploadBackupToCloud();
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('تم رفع النسخة الاحتياطية إلى السحابة: $name')),
-        );
-      } else {
-        final count = await BackupService.downloadLatestFromCloud();
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('تم سحب أحدث نسخة واستعادتها ($count نسخة في السحابة).'),
-          ),
-        );
-        Navigator.of(context).pop();
-      }
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(safeErrorMessage('تعذرت المزامنة السحابية', e))),
-      );
-    }
+    final cubit = context.read<BackupCubit>();
+    await _runBackup(
+      action == 'upload' ? cubit.uploadToCloud : cubit.downloadAndRestoreFromCloud,
+    );
   }
 
   @override
@@ -286,8 +235,8 @@ class _SettingsSheetState extends State<_SettingsSheet> {
               TextField(
                 controller: _name,
                 decoration: const InputDecoration(
-                  labelText: 'اسم المتجر',
-                  prefixIcon: Icon(Icons.storefront_outlined),
+                  labelText: 'اسم المطعم',
+                  prefixIcon: Icon(Icons.restaurant_outlined),
                 ),
               ),
               const SizedBox(height: 14),
@@ -340,7 +289,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
             _SheetAction(
               icon: Icons.backup_outlined,
               title: 'نسخ احتياطي',
-              subtitle: 'حفظ نسخة آمنة من بيانات المتجر الآن',
+              subtitle: 'حفظ نسخة آمنة من بيانات المطعم الآن',
               onTap: _createBackup,
             ),
             const SizedBox(height: 10),
@@ -363,6 +312,13 @@ class _SettingsSheetState extends State<_SettingsSheet> {
               title: 'مزامنة سحابية',
               subtitle: 'رفع نسخة أو استعادتها عبر Supabase',
               onTap: _cloudSync,
+            ),
+            const SizedBox(height: 10),
+            _SheetAction(
+              icon: Icons.print,
+              title: 'إعدادات الطابعة',
+              subtitle: 'ربط طابعة حرارية وطباعة الفواتير',
+              onTap: _openPrinterSettings,
             ),
             const SizedBox(height: 10),
             _SheetAction(

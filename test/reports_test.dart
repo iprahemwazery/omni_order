@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:omni_order/core/utils/formatters.dart';
-import 'package:omni_order/domain/models/customer.dart';
 import 'package:omni_order/domain/models/expense.dart';
 import 'package:omni_order/domain/models/product.dart';
 import 'package:omni_order/domain/models/sale.dart';
@@ -62,64 +61,6 @@ void main() {
     expect(find.text('30 ج.م'), findsWidgets);
   });
 
-  testWidgets('التقارير: البيع الآجل يُحسب مديونية ولا يدخل في صافي الربح', (tester) async {
-    final repository = FakeStoreRepository();
-    final product = Product(name: 'عصير', price: 50, stock: 20);
-    final productId = await repository.addProduct(product);
-    final customerId = await repository.addCustomer(
-      Customer(name: 'محمود', phone: '010'),
-    );
-    await repository.createSale(
-      sale: Sale(
-        total: 40,
-        itemsCount: 2,
-        paymentMethod: 'آجل',
-        customerId: customerId,
-        cashierName: testUsername,
-      ),
-      items: [
-        SaleItem(
-          saleId: 0,
-          productId: productId,
-          name: 'عصير',
-          price: 20,
-          quantity: 2,
-          subtotal: 40,
-        ),
-      ],
-    );
-    await repository.updateCustomer(
-      repository.customers.firstWhere((c) => c.id == customerId).copyWith(balance: 40),
-    );
-    await repository.createSale(
-      sale: Sale(total: 60, itemsCount: 1, cashierName: testUsername),
-      items: [
-        SaleItem(
-          saleId: 0,
-          productId: productId,
-          name: 'عصير',
-          price: 60,
-          quantity: 1,
-          subtotal: 60,
-        ),
-      ],
-    );
-    await repository.addExpense(Expense(name: 'كهرباء', amount: 10));
-
-    await pumpAppOnPhone(tester, repository);
-
-    await openReports(tester);
-
-    // صافي الربح = المبيعات النقدية 60 - المصروفات 10 = 50 (الآجل 40 غير محسوب).
-    expect(find.text('50 ج.م'), findsWidgets);
-
-    // المديونية (الآجل) ظاهرة كبطاقة منفصلة.
-    expect(find.text('مديونية اليوم'), findsOneWidget);
-    expect(find.text('إجمالي الآجل'), findsOneWidget);
-    expect(find.text('40 ج.م'), findsWidgets);
-    expect(find.text('ديون العملاء'), findsOneWidget);
-  });
-
   testWidgets('التقارير: الأيام السابقة تُعرض مجمّعة حسب الشهر ويفتح كل يوم تقريره منفصلًا', (tester) async {
     final repository = FakeStoreRepository();
     final product = Product(name: 'مياه', price: 10, stock: 50);
@@ -152,10 +93,11 @@ void main() {
 
     await openReports(tester);
 
-    // جدول الأيام السابقة موجود أسفل التقرير، مع شهر منفصل باسم الشهر.
-    await tester.scrollUntilVisible(find.text('الأيام السابقة'), 300,
-        scrollable: find.byType(Scrollable).first);
-    expect(find.text('الأيام السابقة'), findsOneWidget);
+    // اختيار قسم "الأيام السابقة" من شرائح الأقسام (المحتوى يتغير في نفس الصفحة).
+    await tester.tap(find.text('الأيام السابقة'));
+    await tester.pumpAndSettle();
+
+    // جدول الأيام السابقة ظهر داخل نفس الشاشة، مع شهر منفصل باسم الشهر.
     final monthHeader = '${AppFormatters.arabicMonth(pastDay)} ${pastDay.year}';
     await tester.scrollUntilVisible(find.text(monthHeader), 300,
         scrollable: find.byType(Scrollable).first);

@@ -8,6 +8,7 @@ import '../../../domain/models/category.dart';
 import '../../../domain/models/product.dart';
 import '../../../shared/widgets/barcode_scanner_dialog.dart';
 import '../../../shared/widgets/empty_state.dart';
+import '../../../shared/widgets/screen_header.dart';
 import '../../auth/presentation/auth_cubit.dart';
 import '../../categories/presentation/categories_cubit.dart';
 import '../../products/presentation/products_cubit.dart';
@@ -37,78 +38,88 @@ class _SalesScreenState extends State<SalesScreen> {
     return BlocBuilder<ProductsCubit, ProductsState>(
       builder: (context, products) {
         return Scaffold(
-          appBar: AppBar(
-            title: const Text('المبيعات'),
-            actions: [
-              IconButton(
-                onPressed: () => Navigator.of(context).push(
-                  MaterialPageRoute(
-                    builder: (_) => const HeldInvoicesScreen(),
+          body: Column(
+            children: [
+              ScreenHeader(
+                title: 'المبيعات',
+                actions: [
+                  IconButton(
+                    onPressed: () => Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => const HeldInvoicesScreen(),
+                      ),
+                    ),
+                    tooltip: 'الفواتير المعلقة',
+                    icon: const Icon(Icons.pause_circle_outline),
                   ),
-                ),
-                tooltip: 'الفواتير المعلقة',
-                icon: const Icon(Icons.pause_circle_outline),
+                  IconButton(
+                    onPressed: () => Navigator.of(context).push(
+                      MaterialPageRoute(builder: (_) => const ShiftScreen()),
+                    ),
+                    tooltip: 'تقرير الوردية',
+                    icon: const Icon(Icons.event_note_outlined),
+                  ),
+                  IconButton(
+                    onPressed: () => _openCartSheet(context),
+                    tooltip: 'السلة',
+                    icon: const Icon(Icons.shopping_cart_outlined),
+                  ),
+                ],
               ),
-              IconButton(
-                onPressed: () => Navigator.of(context).push(
-                  MaterialPageRoute(builder: (_) => const ShiftScreen()),
-                ),
-                tooltip: 'تقرير الوردية',
-                icon: const Icon(Icons.event_note_outlined),
-              ),
-              IconButton(
-                onPressed: () => _openCartSheet(context),
-                tooltip: 'السلة',
-                icon: const Icon(Icons.shopping_cart_outlined),
-              ),
-            ],
-          ),
-          body: SafeArea(
-            child: products.loading
-                ? const Center(child: CircularProgressIndicator())
-                : products.products.isEmpty
-                    ? const EmptyState(
-                        icon: Icons.inventory_2_outlined,
-                        title: 'لا توجد أصناف بعد',
-                        subtitle: 'ابدأ بإضافة الأصناف من شاشة المخزون',
-                      )
-                    : LayoutBuilder(
-                        builder: (context, constraints) {
-                          final isWide = constraints.maxWidth >= 760;
-                          final grid = const _SalesGrid();
+              const Divider(height: 1),
+              Expanded(
+                child: SafeArea(
+                  top: false,
+                  child: products.loading
+                      ? const Center(child: CircularProgressIndicator())
+                      : products.products.isEmpty
+                      ? const EmptyState(
+                          icon: Icons.inventory_2_outlined,
+                          title: 'لا توجد أصناف بعد',
+                          subtitle: 'ابدأ بإضافة الأصناف من شاشة المخزون',
+                        )
+                      : LayoutBuilder(
+                          builder: (context, constraints) {
+                            final isWide = constraints.maxWidth >= 760;
+                            final grid = const _SalesGrid();
 
-                          if (isWide) {
-                            return Row(
+                            if (isWide) {
+                              return Row(
+                                children: [
+                                  Expanded(child: grid),
+                                  Container(
+                                    width: 380,
+                                    margin: const EdgeInsets.all(12),
+                                    decoration: BoxDecoration(
+                                      color: AppColors.surface,
+                                      borderRadius: BorderRadius.circular(18),
+                                      border: Border.all(
+                                        color: AppColors.border,
+                                      ),
+                                    ),
+                                    child: CartPanel(
+                                      onComplete: _completing
+                                          ? null
+                                          : _completeSale,
+                                      onHold: _completing ? null : _holdCart,
+                                    ),
+                                  ),
+                                ],
+                              );
+                            }
+                            return Column(
                               children: [
                                 Expanded(child: grid),
-                                Container(
-                                  width: 380,
-                                  margin: const EdgeInsets.all(12),
-                                  decoration: BoxDecoration(
-                                    color: AppColors.surface,
-                                    borderRadius: BorderRadius.circular(18),
-                                    border:
-                                        Border.all(color: AppColors.border),
-                                  ),
-                                  child: CartPanel(
-                                    onComplete:
-                                        _completing ? null : _completeSale,
-                                    onHold: _completing ? null : _holdCart,
-                                  ),
+                                _MobileCartBar(
+                                  onOpenCart: () => _openCartSheet(context),
                                 ),
                               ],
                             );
-                          }
-                          return Column(
-                            children: [
-                              Expanded(child: grid),
-                              _MobileCartBar(
-                                onOpenCart: () => _openCartSheet(context),
-                              ),
-                            ],
-                          );
-                        },
-                      ),
+                          },
+                        ),
+                ),
+              ),
+            ],
           ),
         );
       },
@@ -145,14 +156,15 @@ class _SalesScreenState extends State<SalesScreen> {
     final cubit = context.read<CartCubit>();
     if (cubit.state.isEmpty) return;
     final messenger = ScaffoldMessenger.of(context);
-    final cashierName =
-        context.read<AuthCubit>().state.admin?.username ?? '';
+    final cashierName = context.read<AuthCubit>().state.admin?.username ?? '';
     try {
       final id = await cubit.holdCart(cashierName: cashierName);
       if (id == null) return;
       messenger.showSnackBar(
         const SnackBar(
-          content: Text('تم تعليق الفاتورة. يمكنك استرجاعها من الفواتير المعلقة.'),
+          content: Text(
+            'تم تعليق الفاتورة. يمكنك استرجاعها من الفواتير المعلقة.',
+          ),
         ),
       );
     } catch (e) {
@@ -169,9 +181,9 @@ class _SalesScreenState extends State<SalesScreen> {
       final sale = await showCheckoutSheet(context);
       if (!mounted) return;
       if (sale != null) {
-        await Navigator.of(context).push(
-          MaterialPageRoute(builder: (_) => ReceiptScreen(sale: sale)),
-        );
+        await Navigator.of(
+          context,
+        ).push(MaterialPageRoute(builder: (_) => ReceiptScreen(sale: sale)));
       }
     } finally {
       if (mounted) setState(() => _completing = false);
@@ -205,7 +217,8 @@ class _SalesGridState extends State<_SalesGrid> {
     final query = _search.text.trim().toLowerCase();
 
     final filtered = products.where((p) {
-      final matchesSearch = query.isEmpty ||
+      final matchesSearch =
+          query.isEmpty ||
           p.name.toLowerCase().contains(query) ||
           (p.barcode.isNotEmpty && p.barcode.toLowerCase().contains(query));
       final matchesCategory =
@@ -257,9 +270,14 @@ class _SalesGridState extends State<_SalesGrid> {
                 )
               : GridView.builder(
                   padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
-                  gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+                  // ارتفاع الخلية يزيد تلقائيًا لو أي صنف ظاهر له وصف
+                  // حتى لا يفيض محتوى الكارت خارج حدود الشبكة.
+                  gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
                     maxCrossAxisExtent: 190,
-                    mainAxisExtent: 182,
+                    mainAxisExtent:
+                        filtered.any((p) => p.description.trim().isNotEmpty)
+                        ? 214
+                        : 182,
                     mainAxisSpacing: 12,
                     crossAxisSpacing: 12,
                   ),
@@ -283,9 +301,9 @@ class _SalesGridState extends State<_SalesGrid> {
   void _quickAdd(Product product) {
     final error = context.read<CartCubit>().addToCart(product, 1);
     if (error != null && context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(error)),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error)));
     }
   }
 
@@ -392,7 +410,13 @@ class _MobileCartBar extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Text('الإجمالي', style: TextStyle(color: AppColors.textSecondary, fontSize: 12)),
+                  const Text(
+                    'الإجمالي',
+                    style: TextStyle(
+                      color: AppColors.textSecondary,
+                      fontSize: 12,
+                    ),
+                  ),
                   Text(
                     AppFormatters.money(cart.total),
                     style: const TextStyle(

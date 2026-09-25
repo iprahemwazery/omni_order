@@ -523,7 +523,7 @@ void main() {
 
       // دخول محلي -> الرئيسية.
       await login(tester);
-      expect(find.text('بيع جديد'), findsOneWidget);
+      expect(find.text('طلب جديد'), findsOneWidget);
     });
 
     testWidgets('فشل التفعيل يعرض رسالة واضحة ويبقى على الشاشة', (tester) async {

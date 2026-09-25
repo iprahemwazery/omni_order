@@ -6,8 +6,6 @@ import '../../../core/utils/error_utils.dart';
 import '../../../domain/models/sale.dart';
 import '../../../domain/models/sale_item.dart';
 import '../../../domain/models/store_settings.dart';
-import '../../customers/presentation/customers_cubit.dart';
-import '../../customers/presentation/customers_state.dart';
 import '../../settings/presentation/settings_cubit.dart';
 import '../../settings/presentation/settings_state.dart';
 import 'sales_cubit.dart';
@@ -52,11 +50,8 @@ class _ReceiptScreenState extends State<ReceiptScreen> {
             return const Center(child: CircularProgressIndicator());
           }
           final items = snapshot.data ?? const [];
-          return BlocBuilder<CustomersCubit, CustomersState>(
-            builder: (context, customers) =>
-                BlocBuilder<SettingsCubit, SettingsState>(
+          return BlocBuilder<SettingsCubit, SettingsState>(
               builder: (context, settings) {
-                final customerName = customers.customerById(widget.sale.customerId)?.name;
                 return Center(
                   child: SingleChildScrollView(
                     padding: const EdgeInsets.all(16),
@@ -67,7 +62,6 @@ class _ReceiptScreenState extends State<ReceiptScreen> {
                           sale: widget.sale,
                           items: items,
                           settings: settings.settings,
-                          customerName: customerName,
                         ),
                         const SizedBox(height: 24),
                         const _SuccessNote(),
@@ -76,7 +70,6 @@ class _ReceiptScreenState extends State<ReceiptScreen> {
                           sale: widget.sale,
                           items: items,
                           settings: settings.settings,
-                          customerName: customerName,
                         ),
                         const SizedBox(height: 12),
                         Row(
@@ -107,8 +100,7 @@ class _ReceiptScreenState extends State<ReceiptScreen> {
                   ),
                 );
               },
-            ),
-          );
+            );
         },
       ),
     );
@@ -150,13 +142,11 @@ class _SavePdfButton extends StatefulWidget {
     required this.sale,
     required this.items,
     required this.settings,
-    this.customerName,
   });
 
   final Sale sale;
   final List<SaleItem> items;
   final StoreSettings settings;
-  final String? customerName;
 
   @override
   State<_SavePdfButton> createState() => _SavePdfButtonState();
@@ -173,7 +163,6 @@ class _SavePdfButtonState extends State<_SavePdfButton> {
         sale: widget.sale,
         items: widget.items,
         settings: widget.settings,
-        customerName: widget.customerName,
       );
       final fileName =
           'فاتورة_${widget.sale.id ?? DateTime.now().millisecondsSinceEpoch}.pdf';

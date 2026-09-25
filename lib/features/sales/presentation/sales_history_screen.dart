@@ -7,7 +7,6 @@ import '../../../domain/models/admin.dart';
 import '../../../domain/models/sale.dart';
 import '../../../shared/widgets/empty_state.dart';
 import '../../auth/presentation/auth_cubit.dart';
-import '../../customers/presentation/customers_cubit.dart';
 import '../../products/presentation/products_cubit.dart';
 import '../../settings/presentation/settings_cubit.dart';
 import 'receipt_screen.dart';
@@ -68,7 +67,7 @@ class _SaleTile extends StatelessWidget {
           decoration: BoxDecoration(
             color: sale.refunded
                 ? const Color(0xFFFBE9E9)
-                : const Color(0xFFE8F1EF),
+                : AppColors.primaryLight,
             borderRadius: BorderRadius.circular(14),
           ),
           child: Icon(
@@ -144,7 +143,6 @@ class _SaleTile extends StatelessWidget {
     if (!context.mounted) return;
     await Future.wait([
       context.read<ProductsCubit>().refresh(),
-      context.read<CustomersCubit>().refresh(),
     ]);
     if (!context.mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(

@@ -129,3 +129,48 @@ class DayHistoryEntry {
   final int salesCount;
   final int expensesCount;
 }
+
+/// تقرير يومي لصالة محددة.
+class HallDailyReport {
+  const HallDailyReport({
+    required this.hallName,
+    required this.date,
+    this.ordersCount = 0,
+    this.totalRevenue = 0,
+    this.activeOrdersCount = 0,
+    this.tablesCount = 0,
+    this.occupiedTablesCount = 0,
+  });
+
+  final String hallName;
+  final DateTime date;
+  final int ordersCount;
+  final double totalRevenue;
+  final int activeOrdersCount;
+  final int tablesCount;
+  final int occupiedTablesCount;
+}
+
+/// تقرير يومي لموظف.
+class DailyEmployeeReport {
+  const DailyEmployeeReport({
+    required this.employeeName,
+    required this.date,
+    this.ordersCount = 0,
+    this.totalSales = 0,
+    this.advancesTaken = 0,
+    this.deductions = 0,
+    this.salary = 0,
+  });
+
+  final String employeeName;
+  final DateTime date;
+  final int ordersCount;
+  final double totalSales;
+  final double advancesTaken;
+  final double deductions;
+  final double salary;
+
+  double get netAdvances => advancesTaken - deductions;
+  double get remainingSalary => (salary - advancesTaken + deductions).clamp(0, double.infinity);
+}

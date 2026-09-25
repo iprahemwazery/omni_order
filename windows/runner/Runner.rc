@@ -90,12 +90,12 @@ BEGIN
         BLOCK "040904e4"
         BEGIN
             VALUE "CompanyName", "apptest" "\0"
-            VALUE "FileDescription", "omni_order" "\0"
+            VALUE "FileDescription", "Ocean Catch" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
             VALUE "InternalName", "omni_order" "\0"
             VALUE "LegalCopyright", "Copyright (C) 2026 apptest. All rights reserved." "\0"
             VALUE "OriginalFilename", "omni_order.exe" "\0"
-            VALUE "ProductName", "omni_order" "\0"
+            VALUE "ProductName", "Ocean Catch" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END
     END

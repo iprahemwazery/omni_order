@@ -55,7 +55,7 @@ class _UsersScreenState extends State<UsersScreen> {
                 style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
               ),
             ),
-            for (final role in [UserRole.admin, UserRole.cashier]) ...[
+            for (final role in [UserRole.admin, UserRole.cashier, UserRole.waiter, UserRole.chef]) ...[
               ListTile(
                 leading: Icon(
                   role == UserRole.admin
@@ -84,7 +84,11 @@ class _UsersScreenState extends State<UsersScreen> {
       case UserRole.admin:
         return 'كل الصلاحيات عدا إدارة المستخدمين';
       case UserRole.cashier:
-        return 'البيع وسجل المبيعات فقط';
+        return 'البيع وسجل المبيعات والطلبات';
+      case UserRole.waiter:
+        return 'البيع وإدارة الطلبات والترابيزات';
+      case UserRole.chef:
+        return 'شاشة المطبخ وعرض الطلبات';
       case UserRole.superAdmin:
         return '';
     }
@@ -184,7 +188,7 @@ class _UserTile extends StatelessWidget {
             radius: 22,
             backgroundColor: user.isSuperAdmin
                 ? AppColors.primary
-                : const Color(0xFFE8F1EF),
+                : AppColors.primaryLight,
             child: Text(
               primaryChar,
               style: TextStyle(
@@ -255,8 +259,10 @@ class _RoleBadge extends StatelessWidget {
   Widget build(BuildContext context) {
     final color = switch (role) {
       UserRole.superAdmin => AppColors.primary,
-      UserRole.admin => const Color(0xFF3D6B99),
-      UserRole.cashier => const Color(0xFF8A6F3D),
+      UserRole.admin => AppColors.info,
+      UserRole.cashier => AppColors.warning,
+      UserRole.waiter => AppColors.success,
+      UserRole.chef => AppColors.warning,
     };
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
@@ -379,7 +385,7 @@ class _UserFormDialogState extends State<_UserFormDialog> {
                 border: OutlineInputBorder(),
               ),
               items: [
-                for (final role in [UserRole.admin, UserRole.cashier])
+                for (final role in [UserRole.admin, UserRole.cashier, UserRole.waiter, UserRole.chef])
                   DropdownMenuItem(value: role, child: Text(role.label)),
               ],
               onChanged: (value) {

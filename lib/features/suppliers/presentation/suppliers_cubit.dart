@@ -1,105 +1,159 @@
 import 'package:flutter_bloc/flutter_bloc.dart';
 
-import '../../../../core/utils/error_utils.dart';
-import '../../../../domain/models/supplier.dart';
-import '../../../../domain/models/supplier_payment.dart';
-import '../../../../domain/repositories/store_repository.dart';
-import 'suppliers_state.dart';
+import '../../../domain/models/supplier.dart';
+import '../../../domain/models/purchase.dart';
+import '../../../domain/models/purchase_item.dart';
+import '../../../domain/models/supplier_payment.dart';
+import '../../../domain/repositories/store_repository.dart';
+import '../domain/usecases/supplier_usecases.dart';
 
-/// يدير قائمة الموردين والمديونيات وسجل السداد للموردين.
-class SuppliersCubit extends Cubit<SuppliersState> {
-  SuppliersCubit(this._repository) : super(const SuppliersState(loading: true));
+class SuppliersState {
+  final List<Supplier> suppliers;
+  final List<Purchase> purchases;
+  final bool loading;
+  final String? error;
 
-  final StoreRepository _repository;
+  const SuppliersState({
+    this.suppliers = const [],
+    this.purchases = const [],
+    this.loading = false,
+    this.error,
+  });
 
-  Future<void> init() async {
-    emit(const SuppliersState(loading: true));
-    await refresh();
+  SuppliersState copyWith({
+    List<Supplier>? suppliers,
+    List<Purchase>? purchases,
+    bool? loading,
+    String? error,
+  }) {
+    return SuppliersState(
+      suppliers: suppliers ?? this.suppliers,
+      purchases: purchases ?? this.purchases,
+      loading: loading ?? this.loading,
+      error: error,
+    );
   }
 
-  Future<void> refresh() async {
+  double get totalPending {
+    return purchases
+        .where((p) => !p.isFullyPaid)
+        .fold<double>(0, (s, p) => s + p.remaining);
+  }
+}
+
+class SuppliersCubit extends Cubit<SuppliersState> {
+  SuppliersCubit(
+    this._repository, {
+    GetSuppliersUseCase? getSuppliers,
+    CreateSupplierUseCase? createSupplier,
+    UpdateSupplierUseCase? updateSupplier,
+    DeleteSupplierUseCase? deleteSupplier,
+    GetPurchasesUseCase? getPurchases,
+    CreatePurchaseUseCase? createPurchase,
+    SettlePurchaseUseCase? settlePurchase,
+    GetPurchaseItemsUseCase? getPurchaseItems,
+    GetSupplierPaymentsUseCase? getSupplierPayments,
+  }) : _getSuppliers = getSuppliers,
+       _createSupplier = createSupplier,
+       _updateSupplier = updateSupplier,
+       _deleteSupplier = deleteSupplier,
+       _getPurchases = getPurchases,
+       _createPurchase = createPurchase,
+       _settlePurchase = settlePurchase,
+       _getPurchaseItems = getPurchaseItems,
+       _getSupplierPayments = getSupplierPayments,
+       super(const SuppliersState());
+
+  final StoreRepository _repository;
+  final GetSuppliersUseCase? _getSuppliers;
+  final CreateSupplierUseCase? _createSupplier;
+  final UpdateSupplierUseCase? _updateSupplier;
+  final DeleteSupplierUseCase? _deleteSupplier;
+  final GetPurchasesUseCase? _getPurchases;
+  final CreatePurchaseUseCase? _createPurchase;
+  final SettlePurchaseUseCase? _settlePurchase;
+  final GetPurchaseItemsUseCase? _getPurchaseItems;
+  final GetSupplierPaymentsUseCase? _getSupplierPayments;
+
+  Future<void> init() async {
+    emit(state.copyWith(loading: true));
     try {
-      final suppliers = await _repository.getSuppliers();
-      emit(SuppliersState(suppliers: suppliers));
+      final suppliers =
+          await (_getSuppliers?.call() ?? _repository.getSuppliers());
+      final purchases =
+          await (_getPurchases?.call() ?? _repository.getPurchases());
+      emit(SuppliersState(suppliers: suppliers, purchases: purchases));
     } catch (e) {
-      emit(state.copyWith(error: safeErrorMessage('تعذر تحميل الموردين', e)));
+      emit(state.copyWith(loading: false, error: 'تعذر تحميل البيانات: $e'));
     }
   }
 
-  Future<String?> addSupplier(
-    String name, {
-    String phone = '',
-    String address = '',
-  }) async {
-    final trimmed = name.trim();
+  Future<String?> addSupplier(Supplier supplier) async {
+    final trimmed = supplier.name.trim();
     if (trimmed.isEmpty) return 'اكتب اسم المورد.';
-    final phoneTrimmed = phone.trim();
-    final addressTrimmed = address.trim();
-    final id = await _repository.addSupplier(
-      Supplier(name: trimmed, phone: phoneTrimmed, address: addressTrimmed),
-    );
-    emit(
-      state.copyWith(
-        suppliers: [
-          ...state.suppliers,
-          Supplier(
-            id: id,
-            name: trimmed,
-            phone: phoneTrimmed,
-            address: addressTrimmed,
-          ),
-        ],
-      ),
-    );
+    final exists = state.suppliers.any((s) => s.name.trim() == trimmed);
+    if (exists) return 'المورد "$trimmed" موجود بالفعل.';
+    if (_createSupplier != null) {
+      await _createSupplier(supplier);
+    } else {
+      await _repository.addSupplier(supplier);
+    }
+    await init();
     return null;
   }
 
-  Future<void> updateSupplier(Supplier supplier) async {
-    await _repository.updateSupplier(supplier);
-    emit(
-      state.copyWith(
-        suppliers: [
-          for (final s in state.suppliers) s.id == supplier.id ? supplier : s,
-        ],
-      ),
+  Future<String?> updateSupplier(Supplier supplier) async {
+    final trimmed = supplier.name.trim();
+    if (trimmed.isEmpty) return 'اكتب اسم المورد.';
+    final exists = state.suppliers.any(
+      (s) => s.id != supplier.id && s.name.trim() == trimmed,
     );
-  }
-
-  Future<void> deleteSupplier(Supplier supplier) async {
-    if (supplier.id == null) return;
-    await _repository.deleteSupplier(supplier.id!);
-    emit(
-      state.copyWith(
-        suppliers: state.suppliers.where((s) => s.id != supplier.id).toList(),
-      ),
-    );
-  }
-
-  Future<String?> recordSupplierPayment(
-    Supplier supplier,
-    double amount, {
-    int? purchaseId,
-  }) async {
-    if (amount <= 0) return 'أدخل مبلغًا أكبر من صفر.';
-    if (supplier.id == null) return 'مورد غير صالح.';
-    if (amount > supplier.balance) return 'المبلغ أكبر من المديونية.';
-    try {
-      await _repository.addSupplierPayment(
-        SupplierPayment(
-          supplierId: supplier.id!,
-          amount: amount,
-          purchaseId: purchaseId,
-        ),
-      );
-      await refresh();
-      return null;
-    } catch (e) {
-      return safeErrorMessage('تعذر تسجيل السداد', e);
+    if (exists) return 'المورد "$trimmed" موجود بالفعل.';
+    if (_updateSupplier != null) {
+      await _updateSupplier(supplier);
+    } else {
+      await _repository.updateSupplier(supplier);
     }
+    await init();
+    return null;
   }
 
-  Future<List<SupplierPayment>> paymentsOf(Supplier supplier) async {
-    if (supplier.id == null) return const [];
-    return _repository.getSupplierPayments(supplier.id!);
+  Future<void> deleteSupplier(int id) async {
+    if (_deleteSupplier != null) {
+      await _deleteSupplier(id);
+    } else {
+      await _repository.deleteSupplier(id);
+    }
+    await init();
+  }
+
+  Future<int> createPurchase({
+    required Purchase purchase,
+    required List<PurchaseItem> items,
+  }) async {
+    final id = _createPurchase != null
+        ? await _createPurchase(purchase: purchase, items: items)
+        : await _repository.createPurchase(purchase: purchase, items: items);
+    await init();
+    return id;
+  }
+
+  Future<void> settlePurchase(int purchaseId, double amount) async {
+    if (_settlePurchase != null) {
+      await _settlePurchase(purchaseId: purchaseId, amount: amount);
+    } else {
+      await _repository.settlePurchase(purchaseId: purchaseId, amount: amount);
+    }
+    await init();
+  }
+
+  Future<List<PurchaseItem>> getPurchaseItems(int purchaseId) async {
+    return await (_getPurchaseItems?.call(purchaseId) ??
+        _repository.getPurchaseItems(purchaseId));
+  }
+
+  Future<List<SupplierPayment>> getSupplierPayments(int supplierId) async {
+    return await (_getSupplierPayments?.call(supplierId) ??
+        _repository.getSupplierPayments(supplierId));
   }
 }

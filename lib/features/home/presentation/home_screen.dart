@@ -5,49 +5,49 @@ import '../../../core/theme/app_colors.dart';
 import '../../../core/utils/formatters.dart';
 import '../../../domain/models/admin.dart';
 import '../../auth/presentation/auth_cubit.dart';
+import '../../auth/presentation/auth_state.dart';
 import '../../categories/presentation/categories_cubit.dart';
-import '../../customers/presentation/customers_cubit.dart';
-import '../../customers/presentation/customers_state.dart';
+import '../../employees/presentation/employees_cubit.dart';
 import '../../expenses/presentation/expenses_cubit.dart';
 import '../../expenses/presentation/expenses_state.dart';
+import '../../halls/presentation/halls_cubit.dart';
 import '../../products/presentation/products_cubit.dart';
 import '../../products/presentation/products_state.dart';
 import '../../sales/presentation/sales_cubit.dart';
 import '../../sales/presentation/sales_state.dart';
-import '../../sales/presentation/sales_screen.dart';
 import '../../settings/presentation/settings_cubit.dart';
 import '../../settings/presentation/settings_state.dart';
-import '../../settings/presentation/settings_sheet.dart';
-import '../../products/presentation/products_screen.dart';
-import '../../purchases/presentation/purchases_screen.dart';
-import '../../customers/presentation/customers_screen.dart';
-import '../../expenses/presentation/expenses_screen.dart';
-import '../../suppliers/presentation/suppliers_screen.dart';
-import '../../sales/presentation/sales_history_screen.dart';
-import '../../sales/presentation/shift_screen.dart';
-import '../../sales/presentation/reports_screen.dart';
+import '../../../shared/widgets/shell_section.dart';
 
-/// الشاشة الرئيسية: ملخص اليوم + بوابات التطبيق.
-class HomeScreen extends StatelessWidget {
-  const HomeScreen({super.key});
+/// لوحة التحكم (محتوى قسم "الرئيسية" داخل الهيكل الثابت):
+/// ملخص اليوم + البطاقات الأساسية. لا تحتوي Scaffold أو قائمة جانبية؛
+/// التنقل يحدث عبر [onSectionSelected] فيتغير المحتوى فقط.
+class DashboardView extends StatelessWidget {
+  const DashboardView({super.key, required this.onSectionSelected});
+
+  final ValueChanged<ShellSection> onSectionSelected;
 
   @override
   Widget build(BuildContext context) {
-    return BlocBuilder<SettingsCubit, SettingsState>(
-      builder: (context, settings) => BlocBuilder<SalesCubit, SalesState>(
-        builder: (context, sales) => BlocBuilder<ProductsCubit, ProductsState>(
-          builder: (context, products) =>
-              BlocBuilder<CustomersCubit, CustomersState>(
-                builder: (context, customers) =>
+    return BlocBuilder<AuthCubit, AuthState>(
+      builder: (context, auth) => BlocBuilder<SettingsCubit, SettingsState>(
+        builder: (context, settings) => BlocBuilder<SalesCubit, SalesState>(
+          builder: (context, sales) =>
+              BlocBuilder<ProductsCubit, ProductsState>(
+                builder: (context, products) =>
                     BlocBuilder<ExpensesCubit, ExpensesState>(
-                      builder: (context, expenses) => _build(
-                        context,
-                        settings: settings,
-                        sales: sales,
-                        products: products,
-                        customers: customers,
-                        expenses: expenses,
-                      ),
+                      builder: (context, expenses) =>
+                          BlocBuilder<EmployeesCubit, EmployeesState>(
+                            builder: (context, employees) => _build(
+                              context,
+                              admin: auth.admin,
+                              settings: settings,
+                              sales: sales,
+                              products: products,
+                              expenses: expenses,
+                              employees: employees,
+                            ),
+                          ),
                     ),
               ),
         ),
@@ -57,145 +57,85 @@ class HomeScreen extends StatelessWidget {
 
   Widget _build(
     BuildContext context, {
+    required Admin? admin,
     required SettingsState settings,
     required SalesState sales,
     required ProductsState products,
-    required CustomersState customers,
     required ExpensesState expenses,
+    required EmployeesState employees,
   }) {
     final loading =
         settings.loading ||
         sales.loading ||
         products.loading ||
-        customers.loading ||
-        expenses.loading;
+        expenses.loading ||
+        employees.loading;
 
     final error =
         settings.error ??
         sales.error ??
         products.error ??
-        customers.error ??
-        expenses.error;
+        expenses.error ??
+        employees.error;
 
-    return Scaffold(
-      body: SafeArea(
-        child: loading
-            ? const Center(child: CircularProgressIndicator())
-            : RefreshIndicator(
-                onRefresh: () async {
-                  final settingsCubit = context.read<SettingsCubit>();
-                  final salesCubit = context.read<SalesCubit>();
-                  final productsCubit = context.read<ProductsCubit>();
-                  final customersCubit = context.read<CustomersCubit>();
-                  final expensesCubit = context.read<ExpensesCubit>();
-                  final categoriesCubit = context.read<CategoriesCubit>();
-                  await Future.wait([
-                    settingsCubit.init(),
-                    salesCubit.init(),
-                    productsCubit.init(),
-                    customersCubit.init(),
-                    expensesCubit.init(),
-                    categoriesCubit.init(),
-                  ]);
-                },
-                child: ListView(
-                  padding: const EdgeInsets.all(20),
-                  children: [
-                    if (error != null) ...[
-                      _ErrorBanner(message: error),
-                      const SizedBox(height: 16),
-                    ],
-                    _Header(
-                      storeName: settings.settings.storeName,
-                      onSettings: () => showSettingsSheet(context),
-                    ),
-                    const SizedBox(height: 20),
-                    _TodaySummary(
-                      revenueToday: sales.totals.cashToday,
-                      deferredToday: sales.totals.deferredToday,
-                      salesCount: sales.totals.countToday,
-                      productsCount: products.products.length,
-                      totalDebts: customers.totalDebts,
-                      expensesToday: expenses.totals.today,
-                      currency: settings.settings.currency,
-                    ),
-                    if (products.outOfStock.isNotEmpty ||
-                        products.lowStock.isNotEmpty) ...[
-                      const SizedBox(height: 16),
-                      _StockAlertBanner(
-                        outOfStock: products.outOfStock.length,
-                        lowStock: products.lowStock.length,
-                      ),
-                    ],
-                    const SizedBox(height: 24),
-                    _ActionsGrid(salesCount: sales.sales.length),
-                    const SizedBox(height: 24),
-                    const Center(
-                      child: Text(
-                        'نظام أومني أوردر لإدارة المحلات',
-                        style: TextStyle(
-                          color: AppColors.textSecondary,
-                          fontSize: 12,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-      ),
-    );
-  }
-}
+    if (loading) {
+      return const Center(child: CircularProgressIndicator());
+    }
 
-class _Header extends StatelessWidget {
-  const _Header({required this.storeName, required this.onSettings});
-
-  final String storeName;
-  final VoidCallback onSettings;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Container(
-          width: 52,
-          height: 52,
-          decoration: BoxDecoration(
-            color: AppColors.primary,
-            borderRadius: BorderRadius.circular(16),
-          ),
-          child: const Icon(Icons.storefront, color: Colors.white, size: 28),
-        ),
-        const SizedBox(width: 14),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+    return RefreshIndicator(
+      onRefresh: () async {
+        final settingsCubit = context.read<SettingsCubit>();
+        final salesCubit = context.read<SalesCubit>();
+        final productsCubit = context.read<ProductsCubit>();
+        final expensesCubit = context.read<ExpensesCubit>();
+        final categoriesCubit = context.read<CategoriesCubit>();
+        final employeesCubit = context.read<EmployeesCubit>();
+        final hallsCubit = context.read<HallsCubit>();
+        await Future.wait([
+          settingsCubit.init(),
+          salesCubit.init(),
+          productsCubit.init(),
+          expensesCubit.init(),
+          categoriesCubit.init(),
+          employeesCubit.init(),
+          hallsCubit.init(),
+        ]);
+      },
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 960),
+          child: ListView(
+            padding: const EdgeInsets.all(16),
             children: [
-              const Text(
-                'مرحبًا بك 👋',
-                style: TextStyle(color: AppColors.textSecondary, fontSize: 14),
+              if (error != null) ...[
+                _ErrorBanner(message: error),
+                const SizedBox(height: 14),
+              ],
+              _TodaySummary(
+                revenueToday: sales.totals.cashToday,
+                deferredToday: sales.totals.deferredToday,
+                salesCount: sales.totals.countToday,
+                productsCount: products.products.length,
+                expensesToday: expenses.totals.today,
+                currency: settings.settings.currency,
+                employeesCount: employees.activeCount,
               ),
-              Text(
-                storeName,
-                style: const TextStyle(
-                  fontSize: 22,
-                  fontWeight: FontWeight.w800,
-                  color: AppColors.textPrimary,
+              if (products.outOfStock.isNotEmpty ||
+                  products.lowStock.isNotEmpty) ...[
+                const SizedBox(height: 14),
+                _StockAlertBanner(
+                  outOfStock: products.outOfStock.length,
+                  lowStock: products.lowStock.length,
+                  onTap: () => onSectionSelected(ShellSection.reports),
                 ),
-              ),
+              ],
+              const SizedBox(height: 20),
+              _ActionsGrid(admin: admin, onSectionSelected: onSectionSelected),
+              const SizedBox(height: 20),
             ],
           ),
         ),
-        IconButton(
-          onPressed: onSettings,
-          tooltip: 'الإعدادات',
-          style: IconButton.styleFrom(
-            backgroundColor: AppColors.surface,
-            side: const BorderSide(color: AppColors.border),
-          ),
-          icon: const Icon(Icons.settings_outlined),
-        ),
-      ],
+      ),
     );
   }
 }
@@ -206,73 +146,72 @@ class _TodaySummary extends StatelessWidget {
     required this.deferredToday,
     required this.salesCount,
     required this.productsCount,
-    required this.totalDebts,
     required this.expensesToday,
     required this.currency,
+    required this.employeesCount,
   });
 
   final double revenueToday;
   final double deferredToday;
   final int salesCount;
   final int productsCount;
-  final double totalDebts;
   final double expensesToday;
   final String currency;
+  final int employeesCount;
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(20),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         gradient: const LinearGradient(
           colors: [AppColors.primary, AppColors.primaryDark],
           begin: Alignment.topRight,
           end: Alignment.bottomLeft,
         ),
-        borderRadius: BorderRadius.circular(22),
+        borderRadius: BorderRadius.circular(16),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Text(
-            'مبيعات اليوم',
-            style: TextStyle(color: Colors.white70, fontSize: 14),
+            'إيرادات اليوم',
+            style: TextStyle(color: Colors.white70, fontSize: 12),
           ),
-          const SizedBox(height: 6),
+          const SizedBox(height: 4),
           Text(
             AppFormatters.money(revenueToday, currency),
             style: const TextStyle(
               color: Colors.white,
-              fontSize: 30,
+              fontSize: 24,
               fontWeight: FontWeight.w800,
             ),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 12),
           Wrap(
-            spacing: 20,
-            runSpacing: 8,
+            spacing: 16,
+            runSpacing: 6,
             children: [
               _SummaryItem(
                 icon: Icons.receipt_long,
-                label: 'فواتير',
+                label: 'طلبات',
                 value: '$salesCount',
               ),
               _SummaryItem(
-                icon: Icons.inventory_2,
-                label: 'أصناف',
+                icon: Icons.restaurant_menu,
+                label: 'منيو',
                 value: '$productsCount',
+              ),
+              _SummaryItem(
+                icon: Icons.people_outline,
+                label: 'موظفين',
+                value: '$employeesCount',
               ),
               if (deferredToday > 0)
                 _SummaryItem(
                   icon: Icons.account_balance_wallet_outlined,
-                  label: 'آجل اليوم',
+                  label: 'آجل',
                   value: AppFormatters.money(deferredToday),
-                ),
-              if (totalDebts > 0)
-                _SummaryItem(
-                  icon: Icons.account_balance_wallet_outlined,
-                  label: 'ديون',
-                  value: AppFormatters.money(totalDebts),
                 ),
               if (expensesToday > 0)
                 _SummaryItem(
@@ -319,10 +258,15 @@ class _SummaryItem extends StatelessWidget {
 }
 
 class _StockAlertBanner extends StatelessWidget {
-  const _StockAlertBanner({required this.outOfStock, required this.lowStock});
+  const _StockAlertBanner({
+    required this.outOfStock,
+    required this.lowStock,
+    required this.onTap,
+  });
 
   final int outOfStock;
   final int lowStock;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -331,16 +275,16 @@ class _StockAlertBanner extends StatelessWidget {
       color: AppColors.surface,
       borderRadius: BorderRadius.circular(16),
       child: InkWell(
-        onTap: () => Navigator.of(
-          context,
-        ).push(MaterialPageRoute(builder: (_) => const ReportsScreen())),
+        onTap: onTap,
         borderRadius: BorderRadius.circular(16),
         child: Container(
           padding: const EdgeInsets.all(14),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(16),
             border: Border.all(
-              color: hasOut ? const Color(0xFFF0D8D8) : AppColors.border,
+              color: hasOut
+                  ? AppColors.error.withValues(alpha: 0.45)
+                  : AppColors.border,
             ),
           ),
           child: Row(
@@ -380,95 +324,54 @@ class _StockAlertBanner extends StatelessWidget {
 }
 
 class _ActionsGrid extends StatelessWidget {
-  const _ActionsGrid({required this.salesCount});
+  const _ActionsGrid({required this.admin, required this.onSectionSelected});
 
-  final int salesCount;
+  final Admin? admin;
+  final ValueChanged<ShellSection> onSectionSelected;
 
   @override
   Widget build(BuildContext context) {
-    final admin = context.read<AuthCubit>().state.admin;
+    final admin = this.admin;
+
+    /// البطاقات الأساسية فقط في الرئيسية،
+    /// وباقي الميزات الإضافية في القائمة الجانبية.
     final actions = <_ActionCard>[
       if (admin != null && admin.has(UserPermission.makeSales))
         _ActionCard(
-          title: 'بيع جديد',
-          subtitle: 'ابدأ فاتورة بسرعة',
-          icon: Icons.point_of_sale,
+          title: 'طلب جديد',
+          subtitle: 'أوردر الصالة',
+          icon: Icons.add_shopping_cart_outlined,
           gradient: const [AppColors.primary, AppColors.primaryDark],
-          onTap: () => Navigator.of(
-            context,
-          ).push(MaterialPageRoute(builder: (_) => const SalesScreen())),
+          onTap: () => onSectionSelected(ShellSection.sales),
+        ),
+      if (admin != null && admin.has(UserPermission.makeSales))
+        _ActionCard(
+          title: 'أوردر الدليفري',
+          subtitle: 'سنتر التليفونات والتوصيل',
+          icon: Icons.delivery_dining_outlined,
+          gradient: const [AppColors.primaryDark, Color(0xFF02331F)],
+          onTap: () => onSectionSelected(ShellSection.delivery),
         ),
       if (admin != null && admin.has(UserPermission.manageProducts))
         _ActionCard(
-          title: 'المخزون',
+          title: 'المنيو',
           subtitle: 'إدارة الأصناف والتصنيفات',
-          icon: Icons.inventory_2_outlined,
-          onTap: () => Navigator.of(
-            context,
-          ).push(MaterialPageRoute(builder: (_) => const ProductsScreen())),
-        ),
-      if (admin != null && admin.has(UserPermission.manageProducts))
-        _ActionCard(
-          title: 'الموردين',
-          subtitle: 'إدارة الموردين والمديونيات',
-          icon: Icons.local_shipping_outlined,
-          onTap: () => Navigator.of(
-            context,
-          ).push(MaterialPageRoute(builder: (_) => const SuppliersScreen())),
-        ),
-      if (admin != null && admin.has(UserPermission.manageProducts))
-        _ActionCard(
-          title: 'المشتريات',
-          subtitle: 'فواتير التوريد والموردين',
-          icon: Icons.receipt_long_outlined,
-          onTap: () => Navigator.of(
-            context,
-          ).push(MaterialPageRoute(builder: (_) => const PurchasesScreen())),
-        ),
-      if (admin != null && admin.has(UserPermission.viewSales))
-        _ActionCard(
-          title: 'المبيعات السابقة',
-          subtitle: '$salesCount فاتورة',
-          icon: Icons.receipt_long_outlined,
-          onTap: () => Navigator.of(
-            context,
-          ).push(MaterialPageRoute(builder: (_) => const SalesHistoryScreen())),
+          icon: Icons.restaurant_menu,
+          onTap: () => onSectionSelected(ShellSection.products),
         ),
       if (admin != null && admin.has(UserPermission.viewSales))
         _ActionCard(
           title: 'الوردية',
           subtitle: 'تقرير Z ومرتجعات الكاشير',
           icon: Icons.event_note_outlined,
-          onTap: () => Navigator.of(
-            context,
-          ).push(MaterialPageRoute(builder: (_) => const ShiftScreen())),
-        ),
-      if (admin != null && admin.has(UserPermission.manageCustomers))
-        _ActionCard(
-          title: 'العملاء',
-          subtitle: 'الديون والمديونيات',
-          icon: Icons.people_outline,
-          onTap: () => Navigator.of(
-            context,
-          ).push(MaterialPageRoute(builder: (_) => const CustomersScreen())),
-        ),
-      if (admin != null && admin.has(UserPermission.manageExpenses))
-        _ActionCard(
-          title: 'المصروفات',
-          subtitle: 'تسجيل مصروفات اليوم',
-          icon: Icons.request_quote_outlined,
-          onTap: () => Navigator.of(
-            context,
-          ).push(MaterialPageRoute(builder: (_) => const ExpensesScreen())),
+          onTap: () => onSectionSelected(ShellSection.shift),
         ),
       if (admin != null && admin.has(UserPermission.viewReports))
         _ActionCard(
           title: 'التقارير',
           subtitle: 'التحليلات والتنبيهات',
           icon: Icons.bar_chart,
-          onTap: () => Navigator.of(
-            context,
-          ).push(MaterialPageRoute(builder: (_) => const ReportsScreen())),
+          onTap: () => onSectionSelected(ShellSection.reports),
         ),
     ];
 
@@ -480,9 +383,9 @@ class _ActionsGrid extends StatelessWidget {
           physics: const NeverScrollableScrollPhysics(),
           gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: columns,
-            childAspectRatio: columns == 3 ? 1.35 : 1.15,
-            crossAxisSpacing: 14,
-            mainAxisSpacing: 14,
+            childAspectRatio: columns == 3 ? 1.7 : 1.45,
+            crossAxisSpacing: 12,
+            mainAxisSpacing: 12,
           ),
           itemCount: actions.length,
           itemBuilder: (context, index) => actions[index],
@@ -511,19 +414,12 @@ class _ActionCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final isGradient = gradient != null;
     final content = Container(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         gradient: isGradient ? LinearGradient(colors: gradient!) : null,
         color: isGradient ? null : AppColors.surface,
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(16),
         border: isGradient ? null : Border.all(color: AppColors.border),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.04),
-            blurRadius: 12,
-            offset: const Offset(0, 4),
-          ),
-        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -532,17 +428,18 @@ class _ActionCard extends StatelessWidget {
           Icon(
             icon,
             color: isGradient ? Colors.white : AppColors.primary,
-            size: 30,
+            size: 24,
           ),
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
             children: [
               Text(
                 title,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
-                  fontSize: 15,
+                  fontSize: 13,
                   fontWeight: FontWeight.w800,
                   color: isGradient ? Colors.white : AppColors.textPrimary,
                 ),
@@ -553,7 +450,7 @@ class _ActionCard extends StatelessWidget {
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
-                  fontSize: 12,
+                  fontSize: 11,
                   color: isGradient ? Colors.white70 : AppColors.textSecondary,
                 ),
               ),
@@ -565,10 +462,10 @@ class _ActionCard extends StatelessWidget {
 
     return Material(
       color: Colors.transparent,
-      borderRadius: BorderRadius.circular(20),
+      borderRadius: BorderRadius.circular(16),
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(16),
         child: content,
       ),
     );

@@ -5,6 +5,7 @@ import '../../../core/theme/app_colors.dart';
 import '../../../core/utils/formatters.dart';
 import '../../../domain/models/expense.dart';
 import '../../../shared/widgets/empty_state.dart';
+import '../../../shared/widgets/screen_header.dart';
 import 'expenses_cubit.dart';
 
 /// شاشة المصروفات اليومية.
@@ -17,13 +18,17 @@ class ExpensesScreen extends StatelessWidget {
     final todayExpenses = state.expensesOn(DateTime.now());
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('المصروفات'),
-        actions: [
-          Padding(
-            padding: const EdgeInsets.only(left: 16),
-            child: Center(
-              child: Text(
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: () => _addExpense(context),
+        icon: const Icon(Icons.add),
+        label: const Text('تسجيل مصروف'),
+      ),
+      body: Column(
+        children: [
+          ScreenHeader(
+            title: 'المصروفات',
+            actions: [
+              Text(
                 'اليوم: ${AppFormatters.money(todayExpenses)}',
                 style: const TextStyle(
                   color: AppColors.warning,
@@ -31,33 +36,32 @@ class ExpensesScreen extends StatelessWidget {
                   fontWeight: FontWeight.w700,
                 ),
               ),
+            ],
+          ),
+          const Divider(height: 1),
+          Expanded(
+            child: SafeArea(
+              top: false,
+              child: state.loading
+                  ? const Center(child: CircularProgressIndicator())
+                  : state.expenses.isEmpty
+                  ? const EmptyState(
+                      icon: Icons.receipt_outlined,
+                      title: 'لا توجد مصروفات',
+                      subtitle: 'سجّل مصاريفك اليومية (إيجار، كهرباء...)',
+                    )
+                  : ListView.separated(
+                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 90),
+                      itemCount: state.expenses.length,
+                      separatorBuilder: (_, _) => const SizedBox(height: 10),
+                      itemBuilder: (context, index) {
+                        final expense = state.expenses[index];
+                        return _ExpenseTile(expense: expense);
+                      },
+                    ),
             ),
           ),
         ],
-      ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => _addExpense(context),
-        icon: const Icon(Icons.add),
-        label: const Text('تسجيل مصروف'),
-      ),
-      body: SafeArea(
-        child: state.loading
-            ? const Center(child: CircularProgressIndicator())
-            : state.expenses.isEmpty
-                ? const EmptyState(
-                    icon: Icons.receipt_outlined,
-                    title: 'لا توجد مصروفات',
-                    subtitle: 'سجّل مصاريفك اليومية (إيجار، كهرباء...)',
-                  )
-                : ListView.separated(
-                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 90),
-                    itemCount: state.expenses.length,
-                    separatorBuilder: (_, _) => const SizedBox(height: 10),
-                    itemBuilder: (context, index) {
-                      final expense = state.expenses[index];
-                      return _ExpenseTile(expense: expense);
-                    },
-                  ),
       ),
     );
   }
@@ -65,11 +69,14 @@ class ExpensesScreen extends StatelessWidget {
   Future<void> _addExpense(BuildContext context) async {
     final result = await _showExpenseDialog(context);
     if (result == null || !context.mounted) return;
-    final error = await context
-        .read<ExpensesCubit>()
-        .addExpense(result.$1, result.$2);
+    final error = await context.read<ExpensesCubit>().addExpense(
+      result.$1,
+      result.$2,
+    );
     if (error != null && context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error)));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error)));
     }
   }
 }
@@ -91,7 +98,10 @@ class _ExpenseTile extends StatelessWidget {
             color: const Color(0xFFFBF3E6),
             borderRadius: BorderRadius.circular(14),
           ),
-          child: const Icon(Icons.account_balance_wallet_outlined, color: AppColors.warning),
+          child: const Icon(
+            Icons.account_balance_wallet_outlined,
+            color: AppColors.warning,
+          ),
         ),
         title: Text(
           expense.name,
@@ -125,7 +135,9 @@ class _ExpenseTile extends StatelessWidget {
                         child: const Text('إلغاء'),
                       ),
                       FilledButton(
-                        style: FilledButton.styleFrom(backgroundColor: AppColors.error),
+                        style: FilledButton.styleFrom(
+                          backgroundColor: AppColors.error,
+                        ),
                         onPressed: () => Navigator.of(context).pop(true),
                         child: const Text('حذف'),
                       ),
@@ -181,9 +193,9 @@ Future<(String, double)?> _showExpenseDialog(BuildContext context) {
           child: const Text('إلغاء'),
         ),
         FilledButton(
-          onPressed: () => Navigator.of(context).pop(
-            (name.text, double.tryParse(amount.text) ?? 0),
-          ),
+          onPressed: () => Navigator.of(
+            context,
+          ).pop((name.text, double.tryParse(amount.text) ?? 0)),
           child: const Text('حفظ'),
         ),
       ],

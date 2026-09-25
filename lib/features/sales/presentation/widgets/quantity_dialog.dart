@@ -144,10 +144,11 @@ class _QuantityDialogState extends State<_QuantityDialog> {
           width: 48,
           height: 48,
           decoration: BoxDecoration(
-            color: const Color(0xFFE8F1EF),
+            color: AppColors.primary.withValues(alpha: 0.12),
             borderRadius: BorderRadius.circular(14),
           ),
-          child: const Icon(Icons.shopping_bag_outlined, color: AppColors.primary),
+          child:
+              const Icon(Icons.shopping_bag_outlined, color: AppColors.primaryLight),
         ),
         const SizedBox(width: 12),
         Expanded(
@@ -158,6 +159,19 @@ class _QuantityDialogState extends State<_QuantityDialog> {
                 product.name,
                 style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
               ),
+              if (product.description.trim().isNotEmpty) ...[
+                const SizedBox(height: 2),
+                Text(
+                  product.description,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: AppColors.textSecondary,
+                    fontSize: 12,
+                    height: 1.3,
+                  ),
+                ),
+              ],
               Text(
                 '${AppFormatters.money(product.price)} • متاح: ${AppFormatters.quantity(product.stock, product.unit)}',
                 style: const TextStyle(color: AppColors.textSecondary, fontSize: 12),

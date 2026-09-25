@@ -3,13 +3,24 @@ import 'package:sqflite/sqflite.dart';
 import '../../core/constants/payment_methods.dart';
 import '../../domain/models/admin.dart';
 import '../../domain/models/category.dart';
+import '../../domain/models/coupon.dart';
 import '../../domain/models/customer.dart';
-import '../../domain/models/customer_payment.dart';
+import '../../domain/models/employee.dart';
+import '../../domain/models/employee_advance.dart';
 import '../../domain/models/expense.dart';
+import '../../domain/models/hall.dart';
 import '../../domain/models/held_cart.dart';
+import '../../domain/models/order.dart';
+import '../../domain/models/order_item.dart';
+import '../../domain/models/order_status_history.dart';
 import '../../domain/models/product.dart';
 import '../../domain/models/purchase.dart';
 import '../../domain/models/purchase_item.dart';
+import '../../domain/models/queue_entry.dart';
+import '../../domain/models/recipe.dart';
+import '../../domain/models/reservation.dart';
+import '../../domain/models/restaurant_table.dart';
+import '../../domain/models/rider_transaction.dart';
 import '../../domain/models/sale.dart';
 import '../../domain/models/sale_item.dart';
 import '../../domain/models/shift.dart';
@@ -19,6 +30,8 @@ import '../../domain/models/supplier.dart';
 import '../../domain/models/supplier_payment.dart';
 import '../../domain/repositories/store_repository.dart';
 import '../database/app_database.dart';
+
+const _settledOrderStatuses = "'cancelled', 'paid', 'delivered', 'handedOver'";
 
 /// تنفيذ المستودع باستخدام SQLite.
 class StoreRepositoryImpl implements StoreRepository {
@@ -102,6 +115,19 @@ class StoreRepositoryImpl implements StoreRepository {
   }
 
   @override
+  Future<List<int>> addProductsBulk(List<Product> products) async {
+    final db = await _db;
+    final ids = <int>[];
+    await db.transaction((txn) async {
+      for (final product in products) {
+        final id = await txn.insert('products', product.toMap());
+        ids.add(id);
+      }
+    });
+    return ids;
+  }
+
+  @override
   Future<void> updateStock(int productId, double delta) async {
     await (await _db).rawUpdate(
       'UPDATE products SET stock = stock + ? WHERE id = ?',
@@ -146,262 +172,6 @@ class StoreRepositoryImpl implements StoreRepository {
         whereArgs: [id],
       );
       await txn.delete('categories', where: 'id = ?', whereArgs: [id]);
-    });
-  }
-
-  // ---- العملاء ----
-
-  @override
-  Future<List<Customer>> getCustomers() async {
-    final rows = await (await _db).query(
-      'customers',
-      orderBy: 'name COLLATE NOCASE',
-    );
-    return rows.map(Customer.fromMap).toList();
-  }
-
-  @override
-  Future<int> addCustomer(Customer customer) async {
-    return (await _db).insert('customers', customer.toMap());
-  }
-
-  @override
-  Future<void> updateCustomer(Customer customer) async {
-    await (await _db).update(
-      'customers',
-      customer.toMap()..remove('id'),
-      where: 'id = ?',
-      whereArgs: [customer.id],
-    );
-  }
-
-  @override
-  Future<void> deleteCustomer(int id) async {
-    await (await _db).delete('customers', where: 'id = ?', whereArgs: [id]);
-  }
-
-  // ---- دفعات العملاء ----
-
-  @override
-  Future<List<CustomerPayment>> getCustomerPayments(int customerId) async {
-    final rows = await (await _db).query(
-      'customer_payments',
-      where: 'customer_id = ?',
-      whereArgs: [customerId],
-      orderBy: 'created_at DESC',
-    );
-    return rows.map(CustomerPayment.fromMap).toList();
-  }
-
-  @override
-  Future<void> addCustomerPayment(CustomerPayment payment) async {
-    final db = await _db;
-    await db.transaction((txn) async {
-      await txn.insert('customer_payments', payment.toMap());
-      await txn.rawUpdate(
-        'UPDATE customers SET balance = MAX(balance - ?, 0) WHERE id = ?',
-        [payment.amount, payment.customerId],
-      );
-    });
-  }
-
-  // ---- الموردين ----
-
-  @override
-  Future<List<Supplier>> getSuppliers() async {
-    final rows = await (await _db).query(
-      'suppliers',
-      orderBy: 'name COLLATE NOCASE',
-    );
-    return rows.map(Supplier.fromMap).toList();
-  }
-
-  @override
-  Future<int> addSupplier(Supplier supplier) async {
-    return (await _db).insert('suppliers', supplier.toMap());
-  }
-
-  @override
-  Future<void> updateSupplier(Supplier supplier) async {
-    await (await _db).update(
-      'suppliers',
-      supplier.toMap()..remove('id'),
-      where: 'id = ?',
-      whereArgs: [supplier.id],
-    );
-  }
-
-  @override
-  Future<void> deleteSupplier(int id) async {
-    await (await _db).delete('suppliers', where: 'id = ?', whereArgs: [id]);
-  }
-
-  // ---- دفعات الموردين ----
-
-  @override
-  Future<List<SupplierPayment>> getSupplierPayments(int supplierId) async {
-    final rows = await (await _db).query(
-      'supplier_payments',
-      where: 'supplier_id = ?',
-      whereArgs: [supplierId],
-      orderBy: 'created_at DESC',
-    );
-    return rows.map(SupplierPayment.fromMap).toList();
-  }
-
-  @override
-  Future<void> addSupplierPayment(SupplierPayment payment) async {
-    final db = await _db;
-    await db.transaction((txn) async {
-      // توزيع المبلغ على فواتير الشراء غير المسددة (الأقدم أولًا)
-      var remaining = payment.amount;
-      int? firstPurchaseId;
-      final targetedPurchaseIds = <int>{};
-
-      if (payment.purchaseId != null && remaining > 0) {
-        final targetRows = await txn.query(
-          'purchases',
-          where: 'id = ? AND supplier_id = ?',
-          whereArgs: [payment.purchaseId, payment.supplierId],
-          limit: 1,
-        );
-        if (targetRows.isNotEmpty) {
-          final target = targetRows.first;
-          final targetId = target['id'] as int;
-          final total = (target['total'] as num).toDouble();
-          final paidAmount =
-              (target['paid_amount'] as num?)?.toDouble() ?? 0;
-          final capacity = (total - paidAmount).clamp(0.0, double.infinity);
-          if (capacity > 0) {
-            final allocate = remaining >= capacity ? capacity : remaining;
-            await txn.rawUpdate(
-              'UPDATE purchases SET paid_amount = paid_amount + ? WHERE id = ?',
-              [allocate, targetId],
-            );
-            firstPurchaseId = targetId;
-            targetedPurchaseIds.add(targetId);
-            remaining -= allocate;
-          }
-        }
-      }
-
-      if (remaining > 0) {
-        final purchaseRows = await txn.query(
-          'purchases',
-          where: 'supplier_id = ? AND total > paid_amount',
-          whereArgs: [payment.supplierId],
-          orderBy: 'created_at ASC, id ASC',
-        );
-        for (final row in purchaseRows) {
-          if (remaining <= 0) break;
-          final purchaseId = row['id'] as int;
-          if (targetedPurchaseIds.contains(purchaseId)) continue;
-          final total = (row['total'] as num).toDouble();
-          final paidAmount =
-              (row['paid_amount'] as num?)?.toDouble() ?? 0;
-          final capacity = (total - paidAmount).clamp(0.0, double.infinity);
-          if (capacity <= 0) continue;
-          final allocate = remaining >= capacity ? capacity : remaining;
-          await txn.rawUpdate(
-            'UPDATE purchases SET paid_amount = paid_amount + ? WHERE id = ?',
-            [allocate, purchaseId],
-          );
-          firstPurchaseId ??= purchaseId;
-          remaining -= allocate;
-        }
-      }
-
-      final map = payment.toMap()..remove('id');
-      if (firstPurchaseId != null) map['purchase_id'] = firstPurchaseId;
-      await txn.insert('supplier_payments', map);
-
-      await txn.rawUpdate(
-        'UPDATE suppliers SET balance = MAX(balance - ?, 0) WHERE id = ?',
-        [payment.amount, payment.supplierId],
-      );
-    });
-  }
-
-  // ---- المشتريات ----
-
-  @override
-  Future<List<Purchase>> getPurchases() async {
-    final rows = await (await _db).query(
-      'purchases',
-      orderBy: 'created_at DESC',
-    );
-    return rows.map(Purchase.fromMap).toList();
-  }
-
-  @override
-  Future<List<PurchaseItem>> getPurchaseItems(int purchaseId) async {
-    final rows = await (await _db).query(
-      'purchase_items',
-      where: 'purchase_id = ?',
-      whereArgs: [purchaseId],
-    );
-    return rows.map(PurchaseItem.fromMap).toList();
-  }
-
-  @override
-  Future<int> createPurchase({
-    required Purchase purchase,
-    required List<PurchaseItem> items,
-  }) async {
-    final db = await _db;
-    return db.transaction((txn) async {
-      int? supplierId = purchase.supplierId;
-      var supplierName = purchase.supplierName.trim();
-
-      if (supplierId == null && supplierName.isNotEmpty) {
-        final supplierRows = await txn.query(
-          'suppliers',
-          where: 'LOWER(TRIM(name)) = ?',
-          whereArgs: [supplierName.toLowerCase()],
-          limit: 1,
-        );
-        if (supplierRows.isNotEmpty) {
-          supplierId = supplierRows.first['id'] as int;
-        }
-      }
-      if (supplierId != null && supplierName.isEmpty) {
-        final supplierRows = await txn.query(
-          'suppliers',
-          where: 'id = ?',
-          whereArgs: [supplierId],
-          limit: 1,
-        );
-        if (supplierRows.isNotEmpty) {
-          supplierName = (supplierRows.first['name'] as String).trim();
-        }
-      }
-
-      final purchaseMap = purchase.toMap();
-      if (supplierId != null) purchaseMap['supplier_id'] = supplierId;
-      final purchaseId = await txn.insert('purchases', purchaseMap);
-      for (final item in items) {
-        await txn.insert(
-          'purchase_items',
-          item.toMap()..['purchase_id'] = purchaseId,
-        );
-        await txn.rawUpdate(
-          'UPDATE products SET stock = stock + ?, cost_price = ? WHERE id = ?',
-          [item.quantity, item.price, item.productId],
-        );
-      }
-
-      if (supplierId != null) {
-        final remainingDebt = (purchase.total - purchase.paidAmount).clamp(
-          0.0,
-          double.infinity,
-        );
-        await txn.rawUpdate(
-          'UPDATE suppliers SET balance = balance + ? WHERE id = ?',
-          [remainingDebt, supplierId],
-        );
-      }
-
-      return purchaseId;
     });
   }
 
@@ -543,10 +313,7 @@ class StoreRepositoryImpl implements StoreRepository {
     final rows = await (await _db).query(
       'sales',
       where: 'created_at >= ? AND created_at < ?',
-      whereArgs: [
-        _dayKey(day),
-        _dayKey(day.add(const Duration(days: 1))),
-      ],
+      whereArgs: [_dayKey(day), _dayKey(day.add(const Duration(days: 1)))],
       orderBy: 'created_at DESC',
     );
     return rows.map(Sale.fromMap).toList();
@@ -600,7 +367,8 @@ class StoreRepositoryImpl implements StoreRepository {
       );
     }
 
-    final entries = byDay.values.toList()..sort((a, b) => b.day.compareTo(a.day));
+    final entries = byDay.values.toList()
+      ..sort((a, b) => b.day.compareTo(a.day));
     return entries;
   }
 
@@ -614,7 +382,8 @@ class StoreRepositoryImpl implements StoreRepository {
     final monthEnd = _dayKey(DateTime(now.year, now.month + 1, 1));
 
     Future<({double amount, int count})> slice(String? from, String? to) async {
-      var sql = 'SELECT COALESCE(SUM(amount), 0) AS amt, COUNT(*) AS cnt '
+      var sql =
+          'SELECT COALESCE(SUM(amount), 0) AS amt, COUNT(*) AS cnt '
           'FROM expenses';
       final args = <Object?>[];
       if (from != null) {
@@ -648,10 +417,7 @@ class StoreRepositoryImpl implements StoreRepository {
     final rows = await (await _db).query(
       'expenses',
       where: 'created_at >= ? AND created_at < ?',
-      whereArgs: [
-        _dayKey(day),
-        _dayKey(day.add(const Duration(days: 1))),
-      ],
+      whereArgs: [_dayKey(day), _dayKey(day.add(const Duration(days: 1)))],
       orderBy: 'created_at DESC',
     );
     return rows.map(Expense.fromMap).toList();
@@ -728,15 +494,35 @@ class StoreRepositoryImpl implements StoreRepository {
           [item.quantity, item.productId],
         );
       }
-      // تحديث مديونية العميل داخل نفس المعاملة لضمان الاتساق.
-      if (sale.paymentMethod == PaymentMethod.deferred && sale.customerId != null) {
-        await txn.rawUpdate(
-          'UPDATE customers SET balance = balance + ? WHERE id = ?',
-          [sale.total, sale.customerId],
-        );
-      }
       return saleId;
     });
+  }
+
+  @override
+  Future<List<Sale>> getDeferredSales() async {
+    final db = await _db;
+    final rows = await db.query(
+      'sales',
+      where: "payment_method = ? AND refunded = 0",
+      whereArgs: [PaymentMethod.deferred],
+      orderBy: 'created_at DESC',
+    );
+    return rows.map(Sale.fromMap).toList();
+  }
+
+  @override
+  Future<void> settleSale({
+    required int saleId,
+    required String paymentMethod,
+    required double amountTendered,
+  }) async {
+    final db = await _db;
+    await db.update(
+      'sales',
+      {'payment_method': paymentMethod, 'amount_tendered': amountTendered},
+      where: 'id = ?',
+      whereArgs: [saleId],
+    );
   }
 
   Future<void> updateSaleItemCostPrice(int saleItemId, double costPrice) async {
@@ -793,21 +579,10 @@ class StoreRepositoryImpl implements StoreRepository {
 
       await txn.update(
         'sales',
-        {
-          'refunded': 1,
-          'refunded_at': DateTime.now().toIso8601String(),
-        },
+        {'refunded': 1, 'refunded_at': DateTime.now().toIso8601String()},
         where: 'id = ?',
         whereArgs: [saleId],
       );
-
-      // Cancel effect on customer deferred debt if the sale was آجل
-      if (sale.paymentMethod == PaymentMethod.deferred && sale.customerId != null) {
-        await txn.rawUpdate(
-          'UPDATE customers SET balance = MAX(balance - ?, 0) WHERE id = ?',
-          [sale.total, sale.customerId],
-        );
-      }
     });
   }
 
@@ -838,7 +613,10 @@ class StoreRepositoryImpl implements StoreRepository {
   }
 
   @override
-  Future<Shift> ensureOpenShift(String cashierName, {DateTime? openedAt}) async {
+  Future<Shift> ensureOpenShift(
+    String cashierName, {
+    DateTime? openedAt,
+  }) async {
     final existing = await getOpenShift(cashierName);
     if (existing != null) return existing;
     final shift = Shift(
@@ -846,11 +624,7 @@ class StoreRepositoryImpl implements StoreRepository {
       openedAt: openedAt ?? DateTime.now(),
     );
     final id = await (await _db).insert('shifts', shift.toMap());
-    return Shift(
-      id: id,
-      cashierName: cashierName,
-      openedAt: shift.openedAt,
-    );
+    return Shift(id: id, cashierName: cashierName, openedAt: shift.openedAt);
   }
 
   @override
@@ -860,8 +634,7 @@ class StoreRepositoryImpl implements StoreRepository {
     final to = (shift.closedAt ?? DateTime.now()).toIso8601String();
     final args = [shift.cashierName, from, to];
 
-    final methodRows = await db.rawQuery(
-      '''
+    final methodRows = await db.rawQuery('''
       SELECT payment_method,
         COUNT(*) AS cnt,
         COALESCE(SUM(total), 0) AS total,
@@ -874,9 +647,7 @@ class StoreRepositoryImpl implements StoreRepository {
       WHERE cashier_name = ? AND refunded = 0
         AND created_at >= ? AND created_at < ?
       GROUP BY payment_method
-      ''',
-      args,
-    );
+      ''', args);
 
     double totalOf(String method, String column) {
       for (final row in methodRows) {
@@ -887,15 +658,12 @@ class StoreRepositoryImpl implements StoreRepository {
       return 0;
     }
 
-    final refundRows = await db.rawQuery(
-      '''
+    final refundRows = await db.rawQuery('''
       SELECT COUNT(*) AS cnt, COALESCE(SUM(total), 0) AS total
       FROM sales
       WHERE cashier_name = ? AND refunded = 1
         AND refunded_at >= ? AND refunded_at < ?
-      ''',
-      args,
-    );
+      ''', args);
     final refundRow = refundRows.first;
 
     return ShiftReport(
@@ -1030,11 +798,1149 @@ class StoreRepositoryImpl implements StoreRepository {
     await setSetting('tax_rate', '${settings.taxRate}');
   }
 
+  // ===== إدارة الصالات =====
+
+  @override
+  Future<List<Hall>> getHalls() async {
+    final rows = await (await _db).query('halls', orderBy: 'created_at ASC');
+    return rows.map(Hall.fromMap).toList();
+  }
+
+  @override
+  Future<int> addHall(Hall hall) async {
+    return (await _db).insert('halls', hall.toMap());
+  }
+
+  @override
+  Future<void> updateHall(Hall hall) async {
+    await (await _db).update(
+      'halls',
+      hall.toMap()..remove('id'),
+      where: 'id = ?',
+      whereArgs: [hall.id],
+    );
+  }
+
+  @override
+  Future<void> deleteHall(int id) async {
+    final db = await _db;
+    await db.transaction((txn) async {
+      await txn.delete(
+        'restaurant_tables',
+        where: 'hall_id = ?',
+        whereArgs: [id],
+      );
+      await txn.delete('halls', where: 'id = ?', whereArgs: [id]);
+    });
+  }
+
+  // ===== إدارة الترابيزات =====
+
+  @override
+  Future<List<RestaurantTable>> getTables() async {
+    final rows = await (await _db).query(
+      'restaurant_tables',
+      orderBy: 'number ASC',
+    );
+    return rows.map(RestaurantTable.fromMap).toList();
+  }
+
+  @override
+  Future<List<RestaurantTable>> getTablesByHall(int hallId) async {
+    final rows = await (await _db).query(
+      'restaurant_tables',
+      where: 'hall_id = ?',
+      whereArgs: [hallId],
+      orderBy: 'number ASC',
+    );
+    return rows.map(RestaurantTable.fromMap).toList();
+  }
+
+  @override
+  Future<int> addTable(RestaurantTable table) async {
+    return (await _db).insert('restaurant_tables', table.toMap());
+  }
+
+  @override
+  Future<void> updateTable(RestaurantTable table) async {
+    await (await _db).update(
+      'restaurant_tables',
+      table.toMap()..remove('id'),
+      where: 'id = ?',
+      whereArgs: [table.id],
+    );
+  }
+
+  @override
+  Future<void> deleteTable(int id) async {
+    await (await _db).delete(
+      'restaurant_tables',
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  @override
+  Future<void> updateTableStatus(
+    int tableId,
+    TableStatus status, {
+    int? orderId,
+  }) async {
+    final map = <String, Object?>{'status': status.name};
+    if (orderId != null) {
+      map['current_order_id'] = orderId;
+    } else if (status == TableStatus.available) {
+      map['current_order_id'] = null;
+    }
+    await (await _db).update(
+      'restaurant_tables',
+      map,
+      where: 'id = ?',
+      whereArgs: [tableId],
+    );
+  }
+
+  @override
+  Future<RestaurantTable?> getTable(int id) async {
+    final rows = await (await _db).query(
+      'restaurant_tables',
+      where: 'id = ?',
+      whereArgs: [id],
+      limit: 1,
+    );
+    return rows.isEmpty ? null : RestaurantTable.fromMap(rows.first);
+  }
+
+  @override
+  Future<List<RestaurantOrder>> getTableOrders(int tableId) async {
+    final rows = await (await _db).query(
+      'orders',
+      where: "table_id = ? AND status NOT IN ($_settledOrderStatuses)",
+      whereArgs: [tableId],
+      orderBy: 'created_at ASC',
+    );
+    return rows.map(RestaurantOrder.fromMap).toList();
+  }
+
+  @override
+  Future<double> payTable(int tableId, String paymentMethod) async {
+    final db = await _db;
+    return db.transaction((txn) async {
+      final orderRows = await txn.query(
+        'orders',
+        where: "table_id = ? AND status NOT IN ($_settledOrderStatuses)",
+        whereArgs: [tableId],
+      );
+      if (orderRows.isEmpty) return 0;
+
+      final now = DateTime.now().toIso8601String();
+      var totalAmount = 0.0;
+      for (final row in orderRows) {
+        totalAmount += (row['total'] as num).toDouble();
+        final orderId = row['id'] as int;
+        await txn.update(
+          'orders',
+          {
+            'status': OrderStatus.paid.name,
+            'completed_at': now,
+            'payment_method': paymentMethod,
+          },
+          where: 'id = ?',
+          whereArgs: [orderId],
+        );
+        await txn.insert(
+          'order_status_history',
+          OrderStatusHistory(
+            orderId: orderId,
+            status: OrderStatus.paid.name,
+          ).toMap(),
+        );
+      }
+
+      await txn.update(
+        'restaurant_tables',
+        {'status': TableStatus.available.name, 'current_order_id': null},
+        where: 'id = ?',
+        whereArgs: [tableId],
+      );
+
+      return totalAmount;
+    });
+  }
+
+  // ===== إدارة الموظفين =====
+
+  @override
+  Future<List<Employee>> getEmployees() async {
+    final rows = await (await _db).query(
+      'employees',
+      orderBy: 'created_at ASC',
+    );
+    return rows.map(Employee.fromMap).toList();
+  }
+
+  @override
+  Future<List<Employee>> getActiveEmployees() async {
+    final rows = await (await _db).query(
+      'employees',
+      where: 'is_active = 1',
+      orderBy: 'name COLLATE NOCASE',
+    );
+    return rows.map(Employee.fromMap).toList();
+  }
+
+  @override
+  Future<List<Employee>> getDeliveryPersons() async {
+    final rows = await (await _db).query(
+      'employees',
+      where: "is_active = 1 AND role = 'delivery'",
+      orderBy: 'name COLLATE NOCASE',
+    );
+    return rows.map(Employee.fromMap).toList();
+  }
+
+  @override
+  Future<int> addEmployee(Employee employee) async {
+    return (await _db).insert('employees', employee.toMap());
+  }
+
+  @override
+  Future<void> updateEmployee(Employee employee) async {
+    await (await _db).update(
+      'employees',
+      employee.toMap()..remove('id'),
+      where: 'id = ?',
+      whereArgs: [employee.id],
+    );
+  }
+
+  @override
+  Future<void> deleteEmployee(int id) async {
+    await (await _db).delete('employees', where: 'id = ?', whereArgs: [id]);
+  }
+
+  @override
+  Future<Employee?> getEmployee(int id) async {
+    final rows = await (await _db).query(
+      'employees',
+      where: 'id = ?',
+      whereArgs: [id],
+      limit: 1,
+    );
+    return rows.isEmpty ? null : Employee.fromMap(rows.first);
+  }
+
+  // ===== سلف الموظفين =====
+
+  @override
+  Future<int> addEmployeeAdvance(EmployeeAdvance advance) async {
+    return (await _db).insert('employee_advances', advance.toMap());
+  }
+
+  @override
+  Future<List<EmployeeAdvance>> getEmployeeAdvances(
+    int employeeId, {
+    DateTime? date,
+  }) async {
+    final db = await _db;
+    String? where;
+    List<Object?>? whereArgs;
+    if (date != null) {
+      final dayStart = DateTime(date.year, date.month, date.day);
+      final dayEnd = dayStart.add(const Duration(days: 1));
+      where = 'employee_id = ? AND created_at >= ? AND created_at < ?';
+      whereArgs = [
+        employeeId,
+        dayStart.toIso8601String(),
+        dayEnd.toIso8601String(),
+      ];
+    } else {
+      where = 'employee_id = ?';
+      whereArgs = [employeeId];
+    }
+    final rows = await db.query(
+      'employee_advances',
+      where: where,
+      whereArgs: whereArgs,
+      orderBy: 'created_at DESC',
+    );
+    return rows.map(EmployeeAdvance.fromMap).toList();
+  }
+
+  @override
+  Future<DailyEmployeeReport> getEmployeeDailyReport(
+    int employeeId,
+    DateTime date,
+  ) async {
+    final db = await _db;
+    final employee = await getEmployee(employeeId);
+    final employeeName = employee?.name ?? '';
+    final salary = employee?.salary ?? 0;
+
+    final dayStart = DateTime(date.year, date.month, date.day);
+    final dayEnd = dayStart.add(const Duration(days: 1));
+    final from = dayStart.toIso8601String();
+    final to = dayEnd.toIso8601String();
+
+    // عدد الأوردرات وإجمالي المبيعات
+    final orderRows = await db.rawQuery(
+      '''
+      SELECT COUNT(*) AS cnt, COALESCE(SUM(total), 0) AS total
+      FROM orders
+      WHERE employee_id = ? AND created_at >= ? AND created_at < ?
+        AND status != 'cancelled' AND refunded = 0
+      ''',
+      [employeeId, from, to],
+    );
+    final ordersCount = orderRows.first['cnt'] as int? ?? 0;
+    final totalSales = (orderRows.first['total'] as num?)?.toDouble() ?? 0;
+
+    // السلف
+    final advanceRows = await db.rawQuery(
+      '''
+      SELECT COALESCE(SUM(amount), 0) AS total
+      FROM employee_advances
+      WHERE employee_id = ? AND type = 'advance'
+        AND created_at >= ? AND created_at < ?
+      ''',
+      [employeeId, from, to],
+    );
+    final advancesTaken = (advanceRows.first['total'] as num?)?.toDouble() ?? 0;
+
+    // الخصومات
+    final deductionRows = await db.rawQuery(
+      '''
+      SELECT COALESCE(SUM(amount), 0) AS total
+      FROM employee_advances
+      WHERE employee_id = ? AND type = 'deduction'
+        AND created_at >= ? AND created_at < ?
+      ''',
+      [employeeId, from, to],
+    );
+    final deductions = (deductionRows.first['total'] as num?)?.toDouble() ?? 0;
+
+    return DailyEmployeeReport(
+      employeeName: employeeName,
+      date: date,
+      ordersCount: ordersCount,
+      totalSales: totalSales,
+      advancesTaken: advancesTaken,
+      deductions: deductions,
+      salary: salary,
+    );
+  }
+
+  // ===== تقرير الصالة اليومي =====
+
+  @override
+  Future<HallDailyReport> getHallDailyReport(int hallId, DateTime date) async {
+    final db = await _db;
+    final hallRows = await db.query(
+      'halls',
+      where: 'id = ?',
+      whereArgs: [hallId],
+      limit: 1,
+    );
+    final hallName = hallRows.isNotEmpty
+        ? hallRows.first['name'] as String
+        : '';
+
+    final dayStart = DateTime(date.year, date.month, date.day);
+    final dayEnd = dayStart.add(const Duration(days: 1));
+    final from = dayStart.toIso8601String();
+    final to = dayEnd.toIso8601String();
+
+    // عدد الطلبات وإجمالي الإيرادات في الصالة نهارًا
+    final orderRows = await db.rawQuery(
+      '''
+      SELECT COUNT(*) AS cnt, COALESCE(SUM(total), 0) AS total
+      FROM orders
+      WHERE hall_id = ? AND created_at >= ? AND created_at < ?
+        AND status != 'cancelled' AND refunded = 0
+      ''',
+      [hallId, from, to],
+    );
+    final ordersCount = orderRows.first['cnt'] as int? ?? 0;
+    final totalRevenue = (orderRows.first['total'] as num?)?.toDouble() ?? 0;
+
+    // عدد الطلبات النشطة (المعلقة على الترابيزات)
+    final activeRows = await db.rawQuery(
+      '''
+      SELECT COUNT(*) AS cnt
+      FROM orders o
+      INNER JOIN restaurant_tables rt ON rt.id = o.table_id
+      WHERE rt.hall_id = ? AND o.status IN ('pending', 'preparing')
+      ''',
+      [hallId],
+    );
+    final activeOrdersCount = activeRows.first['cnt'] as int? ?? 0;
+
+    // عدد الترابيزات الكلي والمشغول
+    final tablesRows = await db.rawQuery(
+      'SELECT COUNT(*) AS cnt FROM restaurant_tables WHERE hall_id = ?',
+      [hallId],
+    );
+    final tablesCount = tablesRows.first['cnt'] as int? ?? 0;
+
+    final occupiedRows = await db.rawQuery(
+      "SELECT COUNT(*) AS cnt FROM restaurant_tables WHERE hall_id = ? AND status = 'occupied'",
+      [hallId],
+    );
+    final occupiedTablesCount = occupiedRows.first['cnt'] as int? ?? 0;
+
+    return HallDailyReport(
+      hallName: hallName,
+      date: date,
+      ordersCount: ordersCount,
+      totalRevenue: totalRevenue,
+      activeOrdersCount: activeOrdersCount,
+      tablesCount: tablesCount,
+      occupiedTablesCount: occupiedTablesCount,
+    );
+  }
+
+  // ===== نظام الطلبات =====
+
+  @override
+  Future<List<RestaurantOrder>> getOrders({
+    int? limit,
+    String? status,
+    String? orderType,
+  }) async {
+    final conditions = <String>[];
+    final args = <Object?>[];
+    if (status != null) {
+      conditions.add('status = ?');
+      args.add(status);
+    }
+    if (orderType != null) {
+      conditions.add('order_type = ?');
+      args.add(orderType);
+    }
+    final where = conditions.isEmpty ? null : conditions.join(' AND ');
+    final rows = await (await _db).query(
+      'orders',
+      where: where,
+      whereArgs: args.isEmpty ? null : args,
+      orderBy: 'created_at DESC',
+      limit: limit,
+    );
+    return rows.map(RestaurantOrder.fromMap).toList();
+  }
+
+  @override
+  Future<RestaurantOrder?> getOrder(int id) async {
+    final rows = await (await _db).query(
+      'orders',
+      where: 'id = ?',
+      whereArgs: [id],
+      limit: 1,
+    );
+    return rows.isEmpty ? null : RestaurantOrder.fromMap(rows.first);
+  }
+
+  @override
+  Future<List<OrderItem>> getOrderItems(int orderId) async {
+    final rows = await (await _db).query(
+      'order_items',
+      where: 'order_id = ?',
+      whereArgs: [orderId],
+    );
+    return rows.map(OrderItem.fromMap).toList();
+  }
+
+  @override
+  Future<int> createOrder({
+    required RestaurantOrder order,
+    required List<OrderItem> items,
+  }) async {
+    final db = await _db;
+    return db.transaction((txn) async {
+      final orderMap = order.toMap()..remove('id');
+      final orderId = await txn.insert('orders', orderMap);
+
+      // سجل الحالة الأولى
+      await txn.insert('order_status_history', {
+        'order_id': orderId,
+        'status': OrderStatus.pending.name,
+        'created_at': DateTime.now().toIso8601String(),
+      });
+
+      for (final item in items) {
+        await txn.insert('order_items', item.toMap()..['order_id'] = orderId);
+      }
+
+      // ربط الطلب بالتريبية وتحديث حالتها (فقط لو التريبية فاضية)
+      if (order.tableId != null) {
+        final tableRows = await txn.query(
+          'restaurant_tables',
+          where: 'id = ?',
+          whereArgs: [order.tableId],
+          limit: 1,
+        );
+        if (tableRows.isNotEmpty) {
+          final currentStatus = tableRows.first['status'] as String;
+          if (currentStatus == TableStatus.available.name) {
+            await txn.update(
+              'restaurant_tables',
+              {
+                'status': TableStatus.occupied.name,
+                'current_order_id': orderId,
+              },
+              where: 'id = ?',
+              whereArgs: [order.tableId],
+            );
+          }
+        }
+      }
+
+      return orderId;
+    });
+  }
+
+  @override
+  Future<void> updateOrderStatus(
+    int orderId,
+    OrderStatus status, {
+    String note = '',
+  }) async {
+    final updates = <String, Object?>{'status': status.name};
+    final terminalStatuses = {
+      OrderStatus.served,
+      OrderStatus.cancelled,
+      OrderStatus.paid,
+      OrderStatus.handedOver,
+      OrderStatus.delivered,
+      OrderStatus.awaitingPayment,
+    };
+    if (terminalStatuses.contains(status)) {
+      updates['completed_at'] = DateTime.now().toIso8601String();
+    }
+
+    final freesTableStatuses = {
+      OrderStatus.cancelled,
+      OrderStatus.paid,
+      OrderStatus.handedOver,
+      OrderStatus.delivered,
+    };
+    final db = await _db;
+    await db.transaction((txn) async {
+      final updated = await txn.update(
+        'orders',
+        updates,
+        where: 'id = ?',
+        whereArgs: [orderId],
+      );
+      if (updated == 0) return;
+      await txn.insert(
+        'order_status_history',
+        OrderStatusHistory(
+          orderId: orderId,
+          status: status.name,
+          note: note,
+        ).toMap(),
+      );
+
+      if (!freesTableStatuses.contains(status)) return;
+      final orderRows = await txn.query(
+        'orders',
+        where: 'id = ?',
+        whereArgs: [orderId],
+        limit: 1,
+      );
+      if (orderRows.isEmpty) return;
+      final tableId = orderRows.first['table_id'] as int?;
+      if (tableId == null) return;
+
+      final activeRows = await txn.query(
+        'orders',
+        where:
+            "table_id = ? AND id != ? AND status NOT IN ($_settledOrderStatuses)",
+        whereArgs: [tableId, orderId],
+        limit: 1,
+      );
+      if (activeRows.isEmpty) {
+        await txn.update(
+          'restaurant_tables',
+          {'status': TableStatus.available.name, 'current_order_id': null},
+          where: 'id = ?',
+          whereArgs: [tableId],
+        );
+      }
+    });
+  }
+
+  @override
+  Future<void> addOrderStatusHistory(OrderStatusHistory entry) async {
+    await (await _db).insert('order_status_history', entry.toMap());
+  }
+
+  @override
+  Future<List<OrderStatusHistory>> getOrderStatusHistory(int orderId) async {
+    final rows = await (await _db).query(
+      'order_status_history',
+      where: 'order_id = ?',
+      whereArgs: [orderId],
+      orderBy: 'created_at ASC',
+    );
+    return rows.map(OrderStatusHistory.fromMap).toList();
+  }
+
+  @override
+  Future<void> updateOrderItemStatus(int orderItemId, String status) async {
+    await (await _db).update(
+      'order_items',
+      {'status': status},
+      where: 'id = ?',
+      whereArgs: [orderItemId],
+    );
+  }
+
+  @override
+  Future<void> cancelOrder(int orderId) async {
+    final db = await _db;
+    await db.transaction((txn) async {
+      final orderRows = await txn.query(
+        'orders',
+        where: 'id = ?',
+        whereArgs: [orderId],
+        limit: 1,
+      );
+      if (orderRows.isEmpty) return;
+      final order = RestaurantOrder.fromMap(orderRows.first);
+      if (const {
+        OrderStatus.paid,
+        OrderStatus.delivered,
+        OrderStatus.handedOver,
+      }.contains(order.orderStatus)) {
+        throw StateError('لا يمكن إلغاء طلب تم تسويده');
+      }
+
+      await txn.update(
+        'orders',
+        {
+          'status': OrderStatus.cancelled.name,
+          'completed_at': DateTime.now().toIso8601String(),
+        },
+        where: 'id = ?',
+        whereArgs: [orderId],
+      );
+      await txn.insert(
+        'order_status_history',
+        OrderStatusHistory(
+          orderId: orderId,
+          status: OrderStatus.cancelled.name,
+        ).toMap(),
+      );
+
+      if (order.tableId != null) {
+        final activeRows = await txn.query(
+          'orders',
+          where:
+              "table_id = ? AND id != ? AND status NOT IN ($_settledOrderStatuses)",
+          whereArgs: [order.tableId, orderId],
+          limit: 1,
+        );
+        if (activeRows.isEmpty) {
+          await txn.update(
+            'restaurant_tables',
+            {'status': TableStatus.available.name, 'current_order_id': null},
+            where: 'id = ?',
+            whereArgs: [order.tableId],
+          );
+        }
+      }
+    });
+  }
+
+  @override
+  Future<List<RestaurantOrder>> getActiveOrders() async {
+    final rows = await (await _db).query(
+      'orders',
+      where: "status IN ('pending', 'preparing')",
+      orderBy: 'created_at ASC',
+    );
+    return rows.map(RestaurantOrder.fromMap).toList();
+  }
+
+  @override
+  Future<List<RestaurantOrder>> getActiveDeliveryOrders() async {
+    final rows = await (await _db).query(
+      'orders',
+      where: "order_type = 'delivery' AND status IN ('pending', 'preparing')",
+      orderBy: 'created_at ASC',
+    );
+    return rows.map(RestaurantOrder.fromMap).toList();
+  }
+
+  @override
+  Future<List<RestaurantOrder>> getKitchenOrders() async {
+    final rows = await (await _db).query(
+      'orders',
+      where: "status IN ('pending', 'preparing', 'ready')",
+      orderBy: 'created_at ASC',
+    );
+    return rows.map(RestaurantOrder.fromMap).toList();
+  }
+
+  @override
+  Future<int> getActiveOrdersCount() async {
+    final rows = await (await _db).rawQuery(
+      "SELECT COUNT(*) AS cnt FROM orders WHERE status IN ('pending', 'preparing')",
+    );
+    return rows.first['cnt'] as int? ?? 0;
+  }
+
+  @override
+  Future<int> getOccupiedTablesCount() async {
+    final rows = await (await _db).rawQuery(
+      "SELECT COUNT(*) AS cnt FROM restaurant_tables WHERE status = 'occupied'",
+    );
+    return rows.first['cnt'] as int? ?? 0;
+  }
+
+  @override
+  Future<int> getActiveEmployeesCount() async {
+    final rows = await (await _db).rawQuery(
+      'SELECT COUNT(*) AS cnt FROM employees WHERE is_active = 1',
+    );
+    return rows.first['cnt'] as int? ?? 0;
+  }
+
   /// مفتاح يوم بصيغة ISO قابلة للمقارنة: 'yyyy-MM-ddT00:00:00.000'.
   static String _dayKey(DateTime day) =>
       DateTime(day.year, day.month, day.day).toIso8601String();
 
   /// يحوّل مفتاح 'yyyy-MM-dd' إلى تاريخ محلي.
-  static DateTime _parseDayKey(String key) =>
-      DateTime.parse('${key}T00:00:00');
+  static DateTime _parseDayKey(String key) => DateTime.parse('${key}T00:00:00');
+
+  // ===== رصيد المندوبين =====
+
+  @override
+  Future<List<RiderTransaction>> getRiderTransactions(int riderId) async {
+    final rows = await (await _db).query(
+      'rider_transactions',
+      where: 'rider_id = ?',
+      whereArgs: [riderId],
+      orderBy: 'created_at DESC',
+    );
+    return rows.map(RiderTransaction.fromMap).toList();
+  }
+
+  @override
+  Future<double> getRiderBalance(int riderId) async {
+    final rows = await (await _db).rawQuery(
+      '''SELECT
+           COALESCE(SUM(CASE WHEN type = 'order_collection' THEN amount ELSE 0 END), 0)
+           - COALESCE(SUM(CASE WHEN type IN ('settlement', 'advance') THEN amount ELSE 0 END), 0)
+           AS balance
+         FROM rider_transactions
+         WHERE rider_id = ?''',
+      [riderId],
+    );
+    return (rows.first['balance'] as num?)?.toDouble() ?? 0;
+  }
+
+  @override
+  Future<int> addRiderTransaction(RiderTransaction transaction) async {
+    return (await _db).insert('rider_transactions', transaction.toMap());
+  }
+
+  @override
+  Future<List<RestaurantOrder>> getRiderOutstandingOrders(int riderId) async {
+    final rows = await (await _db).query(
+      'orders',
+      where: '''rider_id = ?
+        AND order_type = 'delivery'
+        AND status IN ('delivered', 'handedOver')
+        AND id NOT IN (
+          SELECT DISTINCT order_id FROM rider_transactions
+          WHERE rider_id = ? AND order_id IS NOT NULL AND type = 'order_collection'
+        )''',
+      whereArgs: [riderId, riderId],
+      orderBy: 'created_at DESC',
+    );
+    return rows.map(RestaurantOrder.fromMap).toList();
+  }
+
+  // ===== إدارة الموردين =====
+
+  @override
+  Future<List<Supplier>> getSuppliers() async {
+    final rows = await (await _db).query('suppliers', orderBy: 'name ASC');
+    return rows.map(Supplier.fromMap).toList();
+  }
+
+  @override
+  Future<int> addSupplier(Supplier supplier) async {
+    return (await _db).insert('suppliers', supplier.toMap());
+  }
+
+  @override
+  Future<void> updateSupplier(Supplier supplier) async {
+    await (await _db).update(
+      'suppliers',
+      supplier.toMap()..remove('id'),
+      where: 'id = ?',
+      whereArgs: [supplier.id],
+    );
+  }
+
+  @override
+  Future<void> deleteSupplier(int id) async {
+    await (await _db).delete('suppliers', where: 'id = ?', whereArgs: [id]);
+  }
+
+  @override
+  Future<Supplier?> getSupplier(int id) async {
+    final rows = await (await _db).query(
+      'suppliers',
+      where: 'id = ?',
+      whereArgs: [id],
+      limit: 1,
+    );
+    return rows.isEmpty ? null : Supplier.fromMap(rows.first);
+  }
+
+  // ===== إدارة المشتريات =====
+
+  @override
+  Future<List<Purchase>> getPurchases({int? limit}) async {
+    final rows = await (await _db).query(
+      'purchases',
+      orderBy: 'created_at DESC',
+      limit: limit,
+    );
+    return rows.map(Purchase.fromMap).toList();
+  }
+
+  @override
+  Future<Purchase?> getPurchase(int id) async {
+    final rows = await (await _db).query(
+      'purchases',
+      where: 'id = ?',
+      whereArgs: [id],
+      limit: 1,
+    );
+    return rows.isEmpty ? null : Purchase.fromMap(rows.first);
+  }
+
+  @override
+  Future<List<PurchaseItem>> getPurchaseItems(int purchaseId) async {
+    final rows = await (await _db).query(
+      'purchase_items',
+      where: 'purchase_id = ?',
+      whereArgs: [purchaseId],
+    );
+    return rows.map(PurchaseItem.fromMap).toList();
+  }
+
+  @override
+  Future<int> createPurchase({
+    required Purchase purchase,
+    required List<PurchaseItem> items,
+  }) async {
+    return (await _db).transaction((txn) async {
+      final purchaseId = await txn.insert('purchases', purchase.toMap());
+      for (final item in items) {
+        final itemMap = item.copyWith(purchaseId: purchaseId).toMap();
+        await txn.insert('purchase_items', itemMap);
+        // زيادة مخزون الصنف بالكمية المحوّلة لوحدة المخزون الأساسية
+        // (مثلًا: 8 كراتين × 24 قطعة = 192 قطعة).
+        if (item.productId != null && item.stockQuantity != 0) {
+          await txn.rawUpdate(
+            'UPDATE products SET stock = MAX(stock + ?, 0) WHERE id = ?',
+            [item.stockQuantity, item.productId],
+          );
+          // تحديث سعر تكلفة الوحدة الأساسية من سعر الشراء الأخير.
+          if (item.price > 0) {
+            await txn.update(
+              'products',
+              {'cost_price': item.baseUnitCost},
+              where: 'id = ?',
+              whereArgs: [item.productId],
+            );
+          }
+        }
+      }
+      return purchaseId;
+    });
+  }
+
+  @override
+  Future<void> settlePurchase({
+    required int purchaseId,
+    required double amount,
+  }) async {
+    await (await _db).transaction((txn) async {
+      final rows = await txn.query(
+        'purchases',
+        where: 'id = ?',
+        whereArgs: [purchaseId],
+        limit: 1,
+      );
+      if (rows.isEmpty) return;
+      final current = Purchase.fromMap(rows.first);
+      final newPaid = current.paidAmount + amount;
+      await txn.update(
+        'purchases',
+        {'paid_amount': newPaid},
+        where: 'id = ?',
+        whereArgs: [purchaseId],
+      );
+      if (current.supplierId != null) {
+        await txn.rawUpdate(
+          'UPDATE suppliers SET balance = balance - ? WHERE id = ?',
+          [amount, current.supplierId],
+        );
+      }
+    });
+  }
+
+  @override
+  Future<List<SupplierPayment>> getSupplierPayments(int supplierId) async {
+    final rows = await (await _db).query(
+      'supplier_payments',
+      where: 'supplier_id = ?',
+      whereArgs: [supplierId],
+      orderBy: 'created_at DESC',
+    );
+    return rows.map(SupplierPayment.fromMap).toList();
+  }
+
+  // ===== إدارة الكوبونات =====
+
+  @override
+  Future<List<Coupon>> getCoupons() async {
+    final rows = await (await _db).query('coupons', orderBy: 'created_at DESC');
+    return rows.map(Coupon.fromMap).toList();
+  }
+
+  @override
+  Future<int> addCoupon(Coupon coupon) async {
+    return (await _db).insert('coupons', coupon.toMap());
+  }
+
+  @override
+  Future<void> updateCoupon(Coupon coupon) async {
+    await (await _db).update(
+      'coupons',
+      coupon.toMap()..remove('id'),
+      where: 'id = ?',
+      whereArgs: [coupon.id],
+    );
+  }
+
+  @override
+  Future<void> deleteCoupon(int id) async {
+    await (await _db).delete('coupons', where: 'id = ?', whereArgs: [id]);
+  }
+
+  @override
+  Future<Coupon?> getCouponByCode(String code) async {
+    final rows = await (await _db).query(
+      'coupons',
+      where: 'UPPER(code) = ?',
+      whereArgs: [code.toUpperCase()],
+      limit: 1,
+    );
+    return rows.isEmpty ? null : Coupon.fromMap(rows.first);
+  }
+
+  @override
+  Future<void> useCoupon(int couponId) async {
+    await (await _db).rawUpdate(
+      'UPDATE coupons SET used_count = used_count + 1 WHERE id = ?',
+      [couponId],
+    );
+  }
+
+  // ===== إدارة العملاء =====
+
+  @override
+  Future<List<Customer>> getCustomers() async {
+    final rows = await (await _db).query('customers', orderBy: 'name ASC');
+    return rows.map(Customer.fromMap).toList();
+  }
+
+  @override
+  Future<int> addCustomer(Customer customer) async {
+    return (await _db).insert('customers', customer.toMap());
+  }
+
+  @override
+  Future<void> updateCustomer(Customer customer) async {
+    await (await _db).update(
+      'customers',
+      customer.toMap()..remove('id'),
+      where: 'id = ?',
+      whereArgs: [customer.id],
+    );
+  }
+
+  @override
+  Future<void> deleteCustomer(int id) async {
+    await (await _db).delete('customers', where: 'id = ?', whereArgs: [id]);
+  }
+
+  @override
+  Future<Customer?> getCustomer(int id) async {
+    final rows = await (await _db).query(
+      'customers',
+      where: 'id = ?',
+      whereArgs: [id],
+      limit: 1,
+    );
+    return rows.isEmpty ? null : Customer.fromMap(rows.first);
+  }
+
+  @override
+  Future<Customer?> getCustomerByPhone(String phone) async {
+    final rows = await (await _db).query(
+      'customers',
+      where: 'phone = ?',
+      whereArgs: [phone],
+      limit: 1,
+    );
+    return rows.isEmpty ? null : Customer.fromMap(rows.first);
+  }
+
+  @override
+  Future<void> addLoyaltyPoints(int customerId, int points) async {
+    await (await _db).rawUpdate(
+      'UPDATE customers SET loyalty_points = loyalty_points + ? WHERE id = ?',
+      [points, customerId],
+    );
+  }
+
+  // ===== إدارة الحجوزات =====
+  @override
+  Future<List<Reservation>> getReservations() async {
+    final maps = await (await _db).query(
+      'reservations',
+      orderBy: 'reservation_time DESC',
+    );
+    return [for (final m in maps) Reservation.fromMap(m)];
+  }
+
+  @override
+  Future<int> createReservation(Reservation reservation) async {
+    return await (await _db).insert('reservations', reservation.toMap());
+  }
+
+  @override
+  Future<void> updateReservationStatus(int id, ReservationStatus status) async {
+    await (await _db).update(
+      'reservations',
+      {'status': status.name},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  @override
+  Future<void> deleteReservation(int id) async {
+    await (await _db).delete('reservations', where: 'id = ?', whereArgs: [id]);
+  }
+
+  // ===== إدارة قائمة الانتظار =====
+  @override
+  Future<List<QueueEntry>> getQueueEntries() async {
+    final maps = await (await _db).query(
+      'queue_entries',
+      orderBy: 'created_at ASC',
+    );
+    return [for (final m in maps) QueueEntry.fromMap(m)];
+  }
+
+  @override
+  Future<int> addQueueEntry(QueueEntry entry) async {
+    return await (await _db).insert('queue_entries', entry.toMap());
+  }
+
+  @override
+  Future<void> updateQueueEntryStatus(int id, QueueStatus status) async {
+    await (await _db).update(
+      'queue_entries',
+      {'status': status.name},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  @override
+  Future<void> deleteQueueEntry(int id) async {
+    await (await _db).delete('queue_entries', where: 'id = ?', whereArgs: [id]);
+  }
+
+  // ===== إدارة الوصفات =====
+  @override
+  Future<List<Recipe>> getRecipes() async {
+    final maps = await (await _db).query('recipes', orderBy: 'created_at DESC');
+    return [for (final m in maps) Recipe.fromMap(m)];
+  }
+
+  @override
+  Future<int> createRecipe(Recipe recipe) async {
+    final id = await (await _db).insert('recipes', recipe.toMap());
+    for (final item in recipe.items) {
+      await (await _db).insert(
+        'recipe_items',
+        item.copyWith(recipeId: id).toMap(),
+      );
+    }
+    return id;
+  }
+
+  @override
+  Future<void> updateRecipe(Recipe recipe) async {
+    await (await _db).update(
+      'recipes',
+      recipe.toMap(),
+      where: 'id = ?',
+      whereArgs: [recipe.id],
+    );
+    // Delete old items and re-insert
+    await (await _db).delete(
+      'recipe_items',
+      where: 'recipe_id = ?',
+      whereArgs: [recipe.id],
+    );
+    for (final item in recipe.items) {
+      await (await _db).insert(
+        'recipe_items',
+        item.copyWith(recipeId: recipe.id).toMap(),
+      );
+    }
+  }
+
+  @override
+  Future<void> deleteRecipe(int id) async {
+    await (await _db).delete(
+      'recipe_items',
+      where: 'recipe_id = ?',
+      whereArgs: [id],
+    );
+    await (await _db).delete('recipes', where: 'id = ?', whereArgs: [id]);
+  }
+
+  @override
+  Future<List<RecipeItem>> getRecipeItems(int recipeId) async {
+    final maps = await (await _db).query(
+      'recipe_items',
+      where: 'recipe_id = ?',
+      whereArgs: [recipeId],
+    );
+    return [for (final m in maps) RecipeItem.fromMap(m)];
+  }
+
+  @override
+  Future<void> addRecipeItem(RecipeItem item) async {
+    await (await _db).insert('recipe_items', item.toMap());
+  }
+
+  @override
+  Future<void> deleteRecipeItem(int id) async {
+    await (await _db).delete('recipe_items', where: 'id = ?', whereArgs: [id]);
+  }
 }
